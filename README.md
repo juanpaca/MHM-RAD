@@ -1,4 +1,4 @@
-# Multiscale Hybrid-Mixed (MHM) Method – Edge-Based Implementation
+# Multiscale Hybrid-Mixed (MHM) Method – Implementation
 
 This repository provides an implementation of the **Multiscale Hybrid-Mixed (MHM)** method for solving **reaction–advection–diffusion** problems using **FreeFem++** (see Araya et al. (2025)).
 
