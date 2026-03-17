@@ -396,5 +396,5 @@ for(int K = 0; K < NbTriangles; K++){
 
 cout << "uHh = min " << uHhg.min << " max=" << uHhg.max << endl;
 cout << "calP #triangles= " << calP.nt << " | ThK #triangles= " << Th[0].nt << endl;
-cout << "Erros uHh (calH   H   h    ndofLambda    L2error    H1error)" << endl;
+cout << "Errors uHh (calH   H   h    ndofLambda    L2error    H1error)" << endl;
 cout << calP.hmax << " "<<  Ehg.hmax << " " << Th[0].hmax << " " << ndofEh << " " << sqrt(globalSumL2) << " " << sqrt(globalSumH1) << endl;
