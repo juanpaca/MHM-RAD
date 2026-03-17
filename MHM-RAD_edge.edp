@@ -1,4 +1,4 @@
-// MHM implementation for a reaction-diffusion problem with homogeneous Dirichlet conditions (strong) and edge partition (with submesh refinement)
+// MHM implementation for a reaction-advection-diffusion problem with homogeneous Dirichlet conditions (strong) and edge partition (with submesh refinement)
 
 include "getARGV.idp"
 include "ExtractDofsonBorder.idp"
@@ -34,6 +34,7 @@ func int duplicateElement (int[int] arr, int num){
 // Macros
 macro div(u,v) (dx(u) + dy(v)) // Divergence
 macro grad(u) [dx(u), dy(u)]   // Gradient
+macro alpha(a1,a2) [a1, a2]    // Advection vector
 
 // Command line arguments
 int coarseMesh = getARGV("-cM", 3);
@@ -175,11 +176,19 @@ for (int i = 0; i < NbTriangles; ++i) {
 real sigmaVal = 1.0, kappaVal = 1.0; 
 func real kappa(){ return kappaVal; }
 func real sigma(){ return sigmaVal; }
-func real f() { return (sigmaVal + 5*kappaVal*pi*pi)*sin(pi*x)*sin(2*pi*y); } 
+//advection
+func a1 = 1.0;
+func a2 = 1.0;
+
+func real f() { return (sigmaVal + 5*kappaVal*pi*pi)*sin(pi*x)*sin(2*pi*y)
+                        + a1*pi*cos(pi*x)*sin(2*pi*y) + 2*a2*pi*sin(pi*x)*cos(2*pi*y); } 
 func g = 0; 
 func u = sin(pi*x)*sin(2*pi*y);
 func dxu = pi*cos(pi*x)*sin(2*pi*y);
 func dyu = 2*pi*sin(pi*x)*cos(2*pi*y);
+
+
+
 
 int forder = 25;
 
@@ -240,10 +249,13 @@ for(int K = 0; K < NbTriangles; K++){
 
     matrix Ak;
     if(negNumbers == 0){
-        varf ahK(etaK, varphi) = int2d(auxTh)(kappa()*grad(etaK)'*grad(varphi) + sigma()*(etaK*varphi));
+        varf ahK(etaK, varphi) = int2d(auxTh)(kappa()*grad(etaK)'*grad(varphi) + sigma()*(etaK*varphi))
+                                + int2d(auxTh)( 0.5*alpha(a1,a2)'*grad(etaK)*varphi) - int2d(auxTh)( 0.5*alpha(a1,a2)'*grad(varphi)*etaK);
         Ak = ahK(VhK,VhK);
     } else {
-        varf ahK(etaK, varphi) = int2d(auxTh)(kappa()*grad(etaK)'*grad(varphi) + sigma()*(etaK*varphi)) + on(labelGlobalBndyNoDup, etaK=g);
+        varf ahK(etaK, varphi) = int2d(auxTh)(kappa()*grad(etaK)'*grad(varphi) + sigma()*(etaK*varphi)) 
+                                + int2d(auxTh)( 0.5*alpha(a1,a2)'*grad(etaK)*varphi) - int2d(auxTh)( 0.5*alpha(a1,a2)'*grad(varphi)*etaK)
+                                + on(labelGlobalBndyNoDup, etaK=g);
         Ak = ahK(VhK,VhK);
     }
 
