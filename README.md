@@ -5,7 +5,7 @@ This repository provides an implementation of the **Multiscale Hybrid-Mixed (MHM
 The solver adopts a **triple-mesh strategy**, enabling independent control of:
 - the global coarse mesh $\mathcal{P}_\mathcal{H}$,
 - the edge mesh (Lagrange multipliers) $\mathcal{E}_H$,
-- and the local submeshes $\mathcal{T}_h^K$ for each $K \in \mathcal{P}_\mathcal{H}$.
+- and the local submeshes $\mathcal{T}_{h}^K$ for each $K \in \mathcal{P}_\mathcal{H}$.
 
 ---
 
