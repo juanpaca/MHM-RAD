@@ -3,9 +3,9 @@
 This repository provides an implementation of the **Multiscale Hybrid-Mixed (MHM)** method for solving **reaction–advection–diffusion** problems using **FreeFem++** (see Araya et al. (2025)).
 
 The solver adopts a **triple-mesh strategy**, enabling independent control of:
-- the global coarse mesh,
-- the edge discretization (Lagrange multipliers),
-- and the local subgrid resolution.
+- the global coarse mesh $\mathcal{P}_\mathcal{H}$,
+- the edge mesh (Lagrange multipliers) $\mathcal{E}_H$,
+- and the local submeshes $\mathcal{T}_h^K$ for each $K \in \mathcal{P}_\mathcal{H}$.
 
 ---
 
@@ -23,7 +23,7 @@ $$
 u = 0 \quad \text{on } \partial \Omega.
 $$
 
-The MHM formulation decomposes the domain $\Omega$ into a set of polytopal elements $K \in \mathcal{T}_H$.  
+The MHM formulation decomposes the domain $\Omega$ into a set of polytopal elements $K \in \mathcal{P}_\mathcal{H}$.  
 The global coupling is performed through **Lagrange multipliers** $\lambda_H$, which represent the **normal flux across the mesh skeleton**.
 
 ---
@@ -39,7 +39,7 @@ The method decouples resolution scales through three independent parameters:
   Controls the discretization of the edges $\partial K$, where the hybrid unknowns $\lambda_H$ are defined.
 
 - **Submesh (`-subM`)**  
-  Defines the local refinement inside each element $K$, used to solve independent local problems.
+  Defines the local refinement inside each element $K$, used to solve independent local problems. This submesh is implement to be refined over the minimal refinement provided by the minimal mesh whose boundaries coincide with $\mathcal{E}_H^K$.
 
 This separation is a key feature of the MHM framework, allowing efficient multiscale resolution.
 
