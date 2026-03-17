@@ -62,7 +62,7 @@ This separation is a key feature of the MHM framework, allowing efficient multis
 Execute the solver from the terminal using:
 
 ```bash
-FreeFem++ MHM_edge_v3.edp -cM 2 -edgeM 1 -subM 2
+FreeFem++ MHM-RAD_edge.edp -cM 2 -edgeM 1 -subM 2
 ```
 
 ### Parameters:
