@@ -177,8 +177,8 @@ real sigmaVal = 1.0, kappaVal = 1.0;
 func real kappa(){ return kappaVal; }
 func real sigma(){ return sigmaVal; }
 //advection
-func a1 = 1.0;
-func a2 = 1.0;
+func a1 = 0.0;
+func a2 = 0.0;
 
 func real f() { return (sigmaVal + 5*kappaVal*pi*pi)*sin(pi*x)*sin(2*pi*y)
                         + a1*pi*cos(pi*x)*sin(2*pi*y) + 2*a2*pi*sin(pi*x)*cos(2*pi*y); } 
@@ -249,12 +249,12 @@ for(int K = 0; K < NbTriangles; K++){
 
     matrix Ak;
     if(negNumbers == 0){
-        varf ahK(etaK, varphi) = int2d(auxTh)(kappa()*grad(etaK)'*grad(varphi) + sigma()*(etaK*varphi))
-                                + int2d(auxTh)( 0.5*alpha(a1,a2)'*grad(etaK)*varphi) - int2d(auxTh)( 0.5*alpha(a1,a2)'*grad(varphi)*etaK);
+        varf ahK(etaK, varphi) = int2d(auxTh)(kappa()*grad(etaK)'*grad(varphi) + sigma()*(etaK*varphi)
+                                + alpha(a1,a2)'*grad(etaK)*varphi ) ;
         Ak = ahK(VhK,VhK);
     } else {
-        varf ahK(etaK, varphi) = int2d(auxTh)(kappa()*grad(etaK)'*grad(varphi) + sigma()*(etaK*varphi)) 
-                                + int2d(auxTh)( 0.5*alpha(a1,a2)'*grad(etaK)*varphi) - int2d(auxTh)( 0.5*alpha(a1,a2)'*grad(varphi)*etaK)
+        varf ahK(etaK, varphi) = int2d(auxTh)( kappa()*grad(etaK)'*grad(varphi) + sigma()*(etaK*varphi)
+                                + alpha(a1,a2)'*grad(etaK)*varphi )  
                                 + on(labelGlobalBndyNoDup, etaK=g);
         Ak = ahK(VhK,VhK);
     }
@@ -306,7 +306,7 @@ for(int K = 0; K < NbTriangles; K++){
         for(int j = 0; j < ndofVhK; j++)
             MetalK(i,j) = etalK[i][][j];
 
-    AhK = MetalK * Mfketal;
+    AhK = Mfketal' * MetalK'; //This change was really important because the matriz AK is not symmetric for the advection-reaction-diffusion case, so the order of multiplication matters
     efK = Mfketal' * MetafK;
 
     //collect triplets instead of inserting directly into sparse matrix
