@@ -180,11 +180,11 @@ for (int i = 0; i < NbTriangles; ++i) {
 }
 
 // Model problem definitions
-real sigmaVal = 1.0, kappaVal = 1.0; 
+real sigmaVal = 0.0, kappaVal = 1.0; 
 func real kappa(){ return kappaVal; }
 func real sigma(){ return sigmaVal; }
 func a1 = 1.0;
-func a2 = 0.0;
+func a2 = 2.0;
 
 func real f() { return (sigmaVal + 5*kappaVal*pi*pi)*sin(pi*x)*sin(2*pi*y)
                         + a1*pi*cos(pi*x)*sin(2*pi*y) + 2*a2*pi*sin(pi*x)*cos(2*pi*y); } 
