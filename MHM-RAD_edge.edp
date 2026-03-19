@@ -182,9 +182,11 @@ for (int i = 0; i < NbTriangles; ++i) {
 // Model problem definitions
 real sigmaVal = 0.0, kappaVal = 1.0; 
 func real kappa(){ return kappaVal; }
-func real sigma(){ return sigmaVal; }
-func a1 = 1.0;
-func a2 = 2.0;
+func a1 = 0.0;
+func a2 = 0.0;
+func divalpha = 0.0;
+// nu = 0.5*div(alpha) + sigma  
+func real nu(){ return 0.5*divalpha + sigmaVal; }
 
 func real f() { return (sigmaVal + 5*kappaVal*pi*pi)*sin(pi*x)*sin(2*pi*y)
                         + a1*pi*cos(pi*x)*sin(2*pi*y) + 2*a2*pi*sin(pi*x)*cos(2*pi*y); } 
@@ -210,12 +212,15 @@ for(int K=0; K<NbTriangles; K++) {
     int posNum = CountPositive(locationMatrixBndy(K,:), NbPartinEdge);
     int negNum = NbPartinEdge - posNum;
     
-    if (sigmaVal == 0.0 && negNum == 0) {
+    if (negNum == 0) {
         mesh auxTh = Th[K];
         fespace VhK(auxTh, Pk);
         VhK etaK, varphi;
         
-        varf ahK(etaK, varphi) = int2d(auxTh)(kappa()*grad(etaK)'*grad(varphi) + sigmaVal*(etaK*varphi) + alpha(a1,a2)'*grad(etaK)*varphi);
+        varf ahK(etaK, varphi) = int2d(auxTh)(kappa()*grad(etaK)'*grad(varphi)
+                                + 0.5*(alpha(a1,a2)'*grad(etaK))*varphi
+                                - 0.5*etaK*(alpha(a1,a2)'*grad(varphi))
+                                + nu()*(etaK*varphi));
         
         AkArray[K] = ahK(VhK, VhK); 
         isAkComputed[K] = 1;        
@@ -293,8 +298,10 @@ for(int K = 0; K < NbTriangles; K++){
         if(isAkComputed[K] == 1){
             Ak = AkArray[K];
         } else {
-            varf ahK(etaK, varphi) = int2d(auxTh)(kappa()*grad(etaK)'*grad(varphi) + sigma()*(etaK*varphi)
-                                    + alpha(a1,a2)'*grad(etaK)*varphi ) ;
+            varf ahK(etaK, varphi) = int2d(auxTh)(kappa()*grad(etaK)'*grad(varphi)
+                                    + 0.5*(alpha(a1,a2)'*grad(etaK))*varphi
+                                    - 0.5*etaK*(alpha(a1,a2)'*grad(varphi))
+                                    + nu()*(etaK*varphi));
             Ak = ahK(VhK,VhK);
         }
         
@@ -327,9 +334,11 @@ for(int K = 0; K < NbTriangles; K++){
             set(AAk, solver=sparsesolver);
         }
     } else {
-        varf ahK(etaK, varphi) = int2d(auxTh)( kappa()*grad(etaK)'*grad(varphi) + sigma()*(etaK*varphi)
-                                + alpha(a1,a2)'*grad(etaK)*varphi )  
-                                + on(labelGlobalBndyNoDup, etaK=g);       
+        varf ahK(etaK, varphi) = int2d(auxTh)( kappa()*grad(etaK)'*grad(varphi)
+                                + 0.5*(alpha(a1,a2)'*grad(etaK))*varphi
+                                - 0.5*etaK*(alpha(a1,a2)'*grad(varphi))
+                                + nu()*(etaK*varphi))
+                                + on(labelGlobalBndyNoDup, etaK=g);    
         matrix Ak = ahK(VhK,VhK);
         AAk = [[Ak]];
         set(AAk, solver=sparsesolver);
