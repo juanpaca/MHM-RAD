@@ -50,7 +50,7 @@ func Pm = P1dc; // Polynomial order edge
 func Pk = P3; // Polynomial order volume
 
 real tol = 1e-12;
-real tolW0 = 1e-10; // Tolerance for singularity criterion
+real tolW0 = 1e-12; // Tolerance for singularity criterion
 
 // Folders
 string directory = (localStabinK ? "MHMUN" : "MHMGal") + "-EdgePartition-cM"+coarseMesh+"-edgeM"+edgeMesh+"-subM"+subMesh+"-L"+EkOrder+"K"+PkOrder;
@@ -180,20 +180,19 @@ for (int i = 0; i < NbTriangles; ++i) {
 }
 
 // Model problem definitions
-real sigmaVal = 0.0, kappaVal = 1.0; 
+real sigmaVal = 0.0, kappaVal = 3e-3; 
 func real kappa(){ return kappaVal; }
-func a1 = 0.0;
-func a2 = 0.0;
+//30-degree skew advection
+func a1 = 2.0 / sqrt(5.0);
+func a2 = 1.0 / sqrt(5.0);
 func divalpha = 0.0;
 // nu = 0.5*div(alpha) + sigma  
 func real nu(){ return 0.5*divalpha + sigmaVal; }
 
-func real f() { return (sigmaVal + 5*kappaVal*pi*pi)*sin(pi*x)*sin(2*pi*y)
-                        + a1*pi*cos(pi*x)*sin(2*pi*y) + 2*a2*pi*sin(pi*x)*cos(2*pi*y); } 
-func g = 0; 
-func u = sin(pi*x)*sin(2*pi*y);
-func dxu = pi*cos(pi*x)*sin(2*pi*y);
-func dyu = 2*pi*sin(pi*x)*cos(2*pi*y);
+func real f() { return 0.0; } 
+
+// u = 1 on x=0 for y in [0, 0.5] AND y=0 for x in [0, 0.5]
+func g = ((x <= 1e-6 && y <= 0.2 + 1e-6) || (y <= 1e-6 && x <= 1.0 - 1e-10 )) ? 0.0 : 1.0; //discontinuous BC for skew advection
 
 int forder = 25;
 
@@ -480,9 +479,6 @@ for(int K=0; K<NbTriangles; K++) {
     if (mapW0[K] != -1) uH0Array[K] = solGlobalg(countIntEdges + mapW0[K]);
 }
 
-
-real globalSumL2 = 0, globalSumH1 = 0, globalSumH1semi = 0;
-
 // Pre-allocate the gathering array with the known maximum size to avoid segfaults
 real[int, int] uHhg(NbTriangles, ndofVhK0);
 
@@ -527,13 +523,6 @@ for(int K = 0; K < NbTriangles; K++){
         uHhg(K, j) = auxuHhK[][j];
     }
     
-    real L2errK = int2d(Th[K])((u - auxuHhK)^2);
-    real H1semierrK = int2d(Th[K])((dx(auxuHhK)- dxu)^2 +(dy(auxuHhK) - dyu)^2);
-    
-    globalSumL2 += L2errK;
-    globalSumH1semi += H1semierrK;
-    globalSumH1 += L2errK + H1semierrK;
-
     if(exportVTKlocal){
         mesh ThKViz = trunc(Th[K], 1, split = 1);
         fespace VhViz(ThKViz, P1);
@@ -546,5 +535,5 @@ for(int K = 0; K < NbTriangles; K++){
 cout << "uHh = min " << uHhg.min << " max=" << uHhg.max << endl;
 cout << "W0 Kernel detected dynamically in " << numW0Elements << " elements." << endl;
 cout << "calP #triangles= " << calP.nt << " | ThK #triangles= " << Th[0].nt << endl;
-cout << "Erros uHh (calH   H   h    ndofLambda    L2error    H1error)" << endl;
-cout << calP.hmax << " "<<  Ehg.hmax << " " << Th[0].hmax << " " << ndofEh << " " << sqrt(globalSumL2) << " " << sqrt(globalSumH1) << endl;
+cout << "Erros uHh (calH   H   h    ndofLambda)" << endl;
+cout << calP.hmax << " "<<  Ehg.hmax << " " << Th[0].hmax << " " << ndofEh << endl;
