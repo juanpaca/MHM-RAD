@@ -1,4 +1,5 @@
-// MHM implementation for a reaction-advection-diffusion problem with kernel W0 homogeneous Dirichlet conditions (strong) and edge partition (with submesh refinement)
+// MHM implementation for a reaction-advection-diffusion problem with kernel W0 
+// GENERALIZED VERSION: Supports Mixed BCs (Dirichlet Top/Bottom, Neumann Homogeneous Left/Right)
 
 include "getARGV.idp"
 include "ExtractDofsonBorder.idp"
@@ -164,23 +165,28 @@ for(int i = 0; i < countIntEdges; i++){
     mapToInternal(intEdge(i)) = i;
 }
 
-// Location Matrix Boundary
+// =========================================================================
+//  Location Matrix Boundary
+// -1: Left (Neumann), -3: Right (Neumann)
+// -2: Bottom (Dirichlet), -4: Top (Dirichlet)
+// Note: To run Pure Dirichlet on all boundaries, change -1 to -2 and -3 to -4 below.
+// =========================================================================
 int[int, int] locationMatrixBndy(NbTriangles, NbPartinEdge);
 for (int i = 0; i < NbTriangles; ++i) {
     for (int j = 0; j < NbPartinEdge; ++j) {
         int ii = locationMatrix(i, j);
         real xC = coordDofsLocalGlobal(ii, 0);
         real yC = coordDofsLocalGlobal(ii, 1);
-        if (xC == x0) locationMatrixBndy(i, j) = -1;
-        else if (xC == x1) locationMatrixBndy(i, j) = -3;
-        else if (yC == y0) locationMatrixBndy(i, j) = -2;
-        else if (yC == y1) locationMatrixBndy(i, j) = -4;
+        if (abs(xC - x0) <= tol) locationMatrixBndy(i, j) = -1;      // Neumann
+        else if (abs(xC - x1) <= tol) locationMatrixBndy(i, j) = -3; // Neumann
+        else if (abs(yC - y0) <= tol) locationMatrixBndy(i, j) = -2; // Dirichlet
+        else if (abs(yC - y1) <= tol) locationMatrixBndy(i, j) = -4; // Dirichlet
         else locationMatrixBndy(i, j) = ii;
     }
 }
 
 // Model problem definitions
-real sigmaVal = 0.0, kappaVal = 1.0; 
+real sigmaVal = 1.0, kappaVal = 1e-2; 
 func real kappa(){ return kappaVal; }
 func a1 = 0.0;
 func a2 = 0.0;
@@ -188,12 +194,35 @@ func divalpha = 0.0;
 // nu = 0.5*div(alpha) + sigma  
 func real nu(){ return 0.5*divalpha + sigmaVal; }
 
-func real f() { return (sigmaVal + 5*kappaVal*pi*pi)*sin(pi*x)*sin(2*pi*y)
-                        + a1*pi*cos(pi*x)*sin(2*pi*y) + 2*a2*pi*sin(pi*x)*cos(2*pi*y); } 
-func g = 0; 
-func u = sin(pi*x)*sin(2*pi*y);
-func dxu = pi*cos(pi*x)*sin(2*pi*y);
-func dyu = 2*pi*sin(pi*x)*cos(2*pi*y);
+
+//Analytical solution 1 (Dirichlet BCs): 
+//func u = sin(pi*x)*sin(2*pi*y);
+//func dxu = pi*cos(pi*x)*sin(2*pi*y);
+//func dyu = 2*pi*sin(pi*x)*cos(2*pi*y);
+//func real f() { return (sigmaVal + 5*kappaVal*pi*pi)*sin(pi*x)*sin(2*pi*y)
+//                        + a1*pi*cos(pi*x)*sin(2*pi*y) + 2*a2*pi*sin(pi*x)*cos(2*pi*y); } 
+
+
+// //Analytical solution 2 (Mixed BCs for sigma = 0)
+//  func u = (1.0/a2)*(y - ( sinh( (a2*y)/(2*kappaVal) ) )/(  sinh( a2/(2*kappaVal) )   ) *exp( (a2/(2*kappaVal))*(y-1) )  ) ;
+//  func dxu = 0.0;
+//  func dyu = (1.0/a2)*( 1 -  (a2/(2*kappaVal))* ( exp( (a2/(2*kappaVal))*(2*y-1) ) )/( sinh( a2/(2*kappaVal) ) )   ) ;
+
+
+//Analytical solution 3 (Mixed BCs for sigma > 0)
+ func const = sqrt(a2^2 + 4*kappaVal*sigmaVal) /(2*kappaVal);
+ func u = (1.0 / sigmaVal) * ( (sinh(const*(y-1))/sinh(const) )*exp((a2*y)/(2*kappaVal))  -  (sinh(const*(y))/sinh(const) )*exp((a2*(y-1))/(2*kappaVal)) + 1   ) ;
+ func dxu = 0.0;
+ func dyu = exp( (a2*(2*y-1))/(4*kappaVal) ) / ( kappaVal * sinh(const) ) * sinh( const*(y-0.5) );
+
+//source term for both cases
+func real f() {return 1.0;}
+
+
+// User defined boundary functions for Top and Bottom (Dirichlet)
+func gTop = 0.0; 
+func gBottom = 0.0; 
+func gBC = (abs(y - y0) <= tol) ? gBottom : ((abs(y - y1) <= tol) ? gTop : 0.0);
 
 int forder = 25;
 
@@ -209,10 +238,15 @@ int[int] mapW0(NbTriangles);
 mapW0 = -1;
 
 for(int K=0; K<NbTriangles; K++) {
-    int posNum = CountPositive(locationMatrixBndy(K,:), NbPartinEdge);
-    int negNum = NbPartinEdge - posNum;
+    // Check exclusively for Dirichlet boundaries to decide W0 necessity
+    int numDirichletPre = 0;
+    for (int j = 0; j < NbPartinEdge; ++j) {
+        int ii = locationMatrixBndy(K, j);
+        if (ii == -2 || ii == -4) numDirichletPre++;
+    }
     
-    if (negNum == 0) {
+    // Evaluate criterion only for elements with no strong Dirichlet boundary
+    if (numDirichletPre == 0) {
         mesh auxTh = Th[K];
         fespace VhK(auxTh, Pk);
         VhK etaK, varphi;
@@ -266,34 +300,36 @@ for(int K = 0; K < NbTriangles; K++){
     fespace Bndy(auxEh, Pm);
     Bndy bndyx = x, bndyy = y;
 
+    int numDirichlet = 0;
     int[int] dofGlobalBndy(Bndy.ndof);
+    
     for(int i=0; i<Bndy.ndof; i++){
         real bx = bndyx[][i], by = bndyy[][i];
-        if(bx == x0) dofGlobalBndy(i) = -1;
-        else if(bx == x1) dofGlobalBndy(i) = -3;
-        else if(by == y0) dofGlobalBndy(i) = -2;
-        else if(by == y1) dofGlobalBndy(i) = -4;
+        if(abs(bx - x0) <= tol) { dofGlobalBndy(i) = -1; }
+        else if(abs(bx - x1) <= tol) { dofGlobalBndy(i) = -3; }
+        else if(abs(by - y0) <= tol) { dofGlobalBndy(i) = -2; numDirichlet++; }
+        else if(abs(by - y1) <= tol) { dofGlobalBndy(i) = -4; numDirichlet++; }
         else dofGlobalBndy(i) = i;
     }
 
-    int posNumbers = CountPositive(dofGlobalBndy, Bndy.ndof);
-    int negNumbers = Bndy.ndof - posNumbers;
-    
     Bndy labeldofK1 = region;
     real[int] edgeLabellocal = labeldofK1[];
 
-    int[int] labelGlobalBndy(max(negNumbers, 1)); 
-    int jNeg=0;
+    int[int] labelDirichlet(max(numDirichlet, 1)); 
+    int jDir=0;
     for(int i=0; i<Bndy.ndof; i++){
-        if(dofGlobalBndy(i) < 0) labelGlobalBndy(jNeg++) = edgeLabellocal(i);
+        if(dofGlobalBndy(i) == -2 || dofGlobalBndy(i) == -4) {
+            labelDirichlet(jDir++) = edgeLabellocal(i);
+        }
     }
     
-    labelGlobalBndy.sort;
-    int sizelabelGlobalBndy = duplicateElement(labelGlobalBndy, jNeg);
-    int[int] labelGlobalBndyNoDup = labelGlobalBndy(0:sizelabelGlobalBndy-1); 
+    labelDirichlet.sort;
+    int sizeLabelDirichlet = duplicateElement(labelDirichlet, jDir);
+    int[int] labelDirichletNoDup = labelDirichlet(0:sizeLabelDirichlet-1); 
 
     matrix AAk;
-    if(negNumbers == 0){
+    // Condition 1: Element does not touch Dirichlet edges. Saddle point might be needed.
+    if(numDirichlet == 0){
         matrix Ak;
         if(isAkComputed[K] == 1){
             Ak = AkArray[K];
@@ -334,22 +370,23 @@ for(int K = 0; K < NbTriangles; K++){
             set(AAk, solver=sparsesolver);
         }
     } else {
-        varf ahK(etaK, varphi) = int2d(auxTh)( kappa()*grad(etaK)'*grad(varphi)
+        // Condition 2: Strong Dirichlet imposed
+        varf ahK(etaK, varphi) = int2d(auxTh)(kappa()*grad(etaK)'*grad(varphi)
                                 + 0.5*(alpha(a1,a2)'*grad(etaK))*varphi
                                 - 0.5*etaK*(alpha(a1,a2)'*grad(varphi))
                                 + nu()*(etaK*varphi))
-                                + on(labelGlobalBndyNoDup, etaK=g);    
+                                + on(labelDirichletNoDup, etaK=gBC);    
         matrix Ak = ahK(VhK,VhK);
         AAk = [[Ak]];
         set(AAk, solver=sparsesolver);
     }
     
     real[int] Fkf(ndofVhK);
-    if(negNumbers == 0){
+    if(numDirichlet == 0){
         varf fhKf(unused, varphi) = int2d(auxTh, qforder=forder)(f()*varphi);
         Fkf = fhKf(0, VhK);
     } else {
-        varf fhKf(unused, varphi) = int2d(auxTh, qforder=forder)(f()*varphi) + on(labelGlobalBndyNoDup, unused=g);
+        varf fhKf(unused, varphi) = int2d(auxTh, qforder=forder)(f()*varphi) + on(labelDirichletNoDup, unused=gBC);
         Fkf = fhKf(0, VhK);   
     }
 
