@@ -186,10 +186,10 @@ for (int i = 0; i < NbTriangles; ++i) {
 }
 
 // Model problem definitions
-real sigmaVal = 1.0, kappaVal = 1e-2; 
+real sigmaVal = 0.0, kappaVal = 1.0; 
 func real kappa(){ return kappaVal; }
 func a1 = 0.0;
-func a2 = 0.0;
+func a2 = 1.0;
 func divalpha = 0.0;
 // nu = 0.5*div(alpha) + sigma  
 func real nu(){ return 0.5*divalpha + sigmaVal; }
@@ -204,16 +204,19 @@ func real nu(){ return 0.5*divalpha + sigmaVal; }
 
 
 // //Analytical solution 2 (Mixed BCs for sigma = 0)
-//  func u = (1.0/a2)*(y - ( sinh( (a2*y)/(2*kappaVal) ) )/(  sinh( a2/(2*kappaVal) )   ) *exp( (a2/(2*kappaVal))*(y-1) )  ) ;
-//  func dxu = 0.0;
-//  func dyu = (1.0/a2)*( 1 -  (a2/(2*kappaVal))* ( exp( (a2/(2*kappaVal))*(2*y-1) ) )/( sinh( a2/(2*kappaVal) ) )   ) ;
-
+   func u = (1.0/a2)*(y - ( sinh( (a2*y)/(2*kappaVal) ) )/(  sinh( a2/(2*kappaVal) )   ) *exp( (a2/(2*kappaVal))*(y-1) )  ) ;
+   func dxu = 0.0;
+   func dyu = (1.0/a2) - ( (exp((a2/(2*kappaVal))*(y-1))) / (2.0*kappaVal*sinh(a2/(2*kappaVal))) ) * ( cosh((a2*y)/(2*kappaVal)) + sinh((a2*y)/(2*kappaVal)) );
 
 //Analytical solution 3 (Mixed BCs for sigma > 0)
- func const = sqrt(a2^2 + 4*kappaVal*sigmaVal) /(2*kappaVal);
- func u = (1.0 / sigmaVal) * ( (sinh(const*(y-1))/sinh(const) )*exp((a2*y)/(2*kappaVal))  -  (sinh(const*(y))/sinh(const) )*exp((a2*(y-1))/(2*kappaVal)) + 1   ) ;
- func dxu = 0.0;
- func dyu = exp( (a2*(2*y-1))/(4*kappaVal) ) / ( kappaVal * sinh(const) ) * sinh( const*(y-0.5) );
+//  func const = sqrt(a2^2 + 4*kappaVal*sigmaVal) /(2*kappaVal);
+//  func u = (1.0 / sigmaVal) * ( (sinh(const*(y-1))/sinh(const) )*exp((a2*y)/(2*kappaVal))  -  (sinh(const*(y))/sinh(const) )*exp((a2*(y-1))/(2*kappaVal)) + 1   ) ;
+//  func dxu = 0.0;
+//  func dyu = (1.0 / (sigmaVal * sinh(const))) * (
+//     exp((a2*y)/(2*kappaVal)) * (const*cosh(const*(y-1)) + (a2/(2*kappaVal))*sinh(const*(y-1))) 
+//     - 
+//     exp((a2*(y-1))/(2*kappaVal)) * (const*cosh(const*y) + (a2/(2*kappaVal))*sinh(const*y))
+// );
 
 //source term for both cases
 func real f() {return 1.0;}
