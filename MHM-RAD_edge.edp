@@ -177,16 +177,16 @@ for (int i = 0; i < NbTriangles; ++i) {
         int ii = locationMatrix(i, j);
         real xC = coordDofsLocalGlobal(ii, 0);
         real yC = coordDofsLocalGlobal(ii, 1);
-        if (abs(xC - x0) <= tol) locationMatrixBndy(i, j) = -1;      // Neumann
+        if (abs(xC - x0) <= tol) locationMatrixBndy(i, j) = -1;      // Dirichlet
         else if (abs(xC - x1) <= tol) locationMatrixBndy(i, j) = -3; // Neumann
         else if (abs(yC - y0) <= tol) locationMatrixBndy(i, j) = -2; // Dirichlet
-        else if (abs(yC - y1) <= tol) locationMatrixBndy(i, j) = -4; // Dirichlet
+        else if (abs(yC - y1) <= tol) locationMatrixBndy(i, j) = -4; // Neumann
         else locationMatrixBndy(i, j) = ii;
     }
 }
 
 // Model problem definitions
-real sigmaVal = 0.0, kappaVal = 1.0; 
+real sigmaVal = 0.0, kappaVal = 1e-3; 
 func real kappa(){ return kappaVal; }
 func a1 = 0.0;
 func a2 = 1.0;
@@ -196,14 +196,6 @@ func real nu(){ return 0.5*divalpha + sigmaVal; }
 
 //source term for both cases
 func real f() {return 1.0;}
-
-
-// User defined boundary functions for Top and Bottom (Dirichlet)
-func gTop = 0.0; 
-func gBottom = 0.0; 
-func gBC = (abs(y - y0) <= tol) ? gBottom : ((abs(y - y1) <= tol) ? gTop : 0.0);
-
-//Adapt the following function setting dirichlet left and bottom, and neumann on right and top
 
 // u = 1 on x=0 for y in [0, 0.5] AND y=0 for x in [0, 0.5]
 func g = ((x <= 1e-6 && y <= 0.2 + 1e-6) || (y <= 1e-6 && x <= 1.0 - 1e-10 )) ? 0.0 : 1.0; //discontinuous BC for skew advection
@@ -227,7 +219,7 @@ for(int K=0; K<NbTriangles; K++) {
     int numDirichletPre = 0;
     for (int j = 0; j < NbPartinEdge; ++j) {
         int ii = locationMatrixBndy(K, j);
-        if (ii == -2 || ii == -4) numDirichletPre++;
+        if (ii == -2 || ii == -1) numDirichletPre++;
     }
     
     // Evaluate criterion only for elements with no strong Dirichlet boundary
@@ -290,10 +282,10 @@ for(int K = 0; K < NbTriangles; K++){
     
     for(int i=0; i<Bndy.ndof; i++){
         real bx = bndyx[][i], by = bndyy[][i];
-        if(abs(bx - x0) <= tol) { dofGlobalBndy(i) = -1; }
+        if(abs(bx - x0) <= tol) { dofGlobalBndy(i) = -1; numDirichlet++;}
         else if(abs(bx - x1) <= tol) { dofGlobalBndy(i) = -3; }
         else if(abs(by - y0) <= tol) { dofGlobalBndy(i) = -2; numDirichlet++; }
-        else if(abs(by - y1) <= tol) { dofGlobalBndy(i) = -4; numDirichlet++; }
+        else if(abs(by - y1) <= tol) { dofGlobalBndy(i) = -4;  }
         else dofGlobalBndy(i) = i;
     }
 
@@ -303,7 +295,7 @@ for(int K = 0; K < NbTriangles; K++){
     int[int] labelDirichlet(max(numDirichlet, 1)); 
     int jDir=0;
     for(int i=0; i<Bndy.ndof; i++){
-        if(dofGlobalBndy(i) == -2 || dofGlobalBndy(i) == -4) {
+        if(dofGlobalBndy(i) == -2 || dofGlobalBndy(i) == -1) {
             labelDirichlet(jDir++) = edgeLabellocal(i);
         }
     }
@@ -360,7 +352,7 @@ for(int K = 0; K < NbTriangles; K++){
                                 + 0.5*(alpha(a1,a2)'*grad(etaK))*varphi
                                 - 0.5*etaK*(alpha(a1,a2)'*grad(varphi))
                                 + nu()*(etaK*varphi))
-                                + on(labelDirichletNoDup, etaK=gBC);    
+                                + on(labelDirichletNoDup, etaK=g);    
         matrix Ak = ahK(VhK,VhK);
         AAk = [[Ak]];
         set(AAk, solver=sparsesolver);
@@ -371,7 +363,7 @@ for(int K = 0; K < NbTriangles; K++){
         varf fhKf(unused, varphi) = int2d(auxTh, qforder=forder)(f()*varphi);
         Fkf = fhKf(0, VhK);
     } else {
-        varf fhKf(unused, varphi) = int2d(auxTh, qforder=forder)(f()*varphi) + on(labelDirichletNoDup, unused=gBC);
+        varf fhKf(unused, varphi) = int2d(auxTh, qforder=forder)(f()*varphi) + on(labelDirichletNoDup, unused=g);
         Fkf = fhKf(0, VhK);   
     }
 
