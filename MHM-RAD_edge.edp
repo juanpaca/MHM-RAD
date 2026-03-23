@@ -167,9 +167,9 @@ for(int i = 0; i < countIntEdges; i++){
 
 // =========================================================================
 //  Location Matrix Boundary
-// -1: Left (Neumann), -3: Right (Neumann)
+// -1: Left (Dirichlet), -3: Right (Dirichlet)
 // -2: Bottom (Dirichlet), -4: Top (Dirichlet)
-// Note: To run Pure Dirichlet on all boundaries, change -1 to -2 and -3 to -4 below.
+// Note: To change the boundary conditions, simply modify the assigned values in the if-else structure where i have wrotten 'change here for mixed conditions'. The rest of the code will adapt accordingly.
 // =========================================================================
 int[int, int] locationMatrixBndy(NbTriangles, NbPartinEdge);
 for (int i = 0; i < NbTriangles; ++i) {
@@ -178,9 +178,9 @@ for (int i = 0; i < NbTriangles; ++i) {
         real xC = coordDofsLocalGlobal(ii, 0);
         real yC = coordDofsLocalGlobal(ii, 1);
         if (abs(xC - x0) <= tol) locationMatrixBndy(i, j) = -1;      // Dirichlet
-        else if (abs(xC - x1) <= tol) locationMatrixBndy(i, j) = -3; // Neumann
+        else if (abs(xC - x1) <= tol) locationMatrixBndy(i, j) = -3; // Dirichlet
         else if (abs(yC - y0) <= tol) locationMatrixBndy(i, j) = -2; // Dirichlet
-        else if (abs(yC - y1) <= tol) locationMatrixBndy(i, j) = -4; // Neumann
+        else if (abs(yC - y1) <= tol) locationMatrixBndy(i, j) = -4; // Dirichlet
         else locationMatrixBndy(i, j) = ii;
     }
 }
@@ -219,8 +219,8 @@ for(int K=0; K<NbTriangles; K++) {
     int numDirichletPre = 0;
     for (int j = 0; j < NbPartinEdge; ++j) {
         int ii = locationMatrixBndy(K, j);
-        //if (ii == -2 || ii == -4) numDirichletPre++;
-        if (ii < 0 ) numDirichletPre++;
+        //if (ii == -2 || ii == -4) numDirichletPre++; //change here for mixed conditions
+        if (ii < 0 ) numDirichletPre++; //only dirichlet conditions
     }
     
     // Evaluate criterion only for elements with no strong Dirichlet boundary
@@ -283,10 +283,10 @@ for(int K = 0; K < NbTriangles; K++){
     
     for(int i=0; i<Bndy.ndof; i++){
         real bx = bndyx[][i], by = bndyy[][i];
-        if(abs(bx - x0) <= tol) { dofGlobalBndy(i) = -1; numDirichlet++;}
-        else if(abs(bx - x1) <= tol) { dofGlobalBndy(i) = -3; numDirichlet++; }
-        else if(abs(by - y0) <= tol) { dofGlobalBndy(i) = -2; numDirichlet++; }
-        else if(abs(by - y1) <= tol) { dofGlobalBndy(i) = -4;  numDirichlet++;}
+        if(abs(bx - x0) <= tol) { dofGlobalBndy(i) = -1; numDirichlet++;} //change here for mixed conditions
+        else if(abs(bx - x1) <= tol) { dofGlobalBndy(i) = -3; numDirichlet++; } //change here for mixed conditions
+        else if(abs(by - y0) <= tol) { dofGlobalBndy(i) = -2; numDirichlet++; } //change here for mixed conditions
+        else if(abs(by - y1) <= tol) { dofGlobalBndy(i) = -4;  numDirichlet++;} //change here for mixed conditions
         else dofGlobalBndy(i) = i;
     }
 
@@ -298,7 +298,7 @@ for(int K = 0; K < NbTriangles; K++){
     for(int i=0; i<Bndy.ndof; i++){
         //if(dofGlobalBndy(i) == -2 || dofGlobalBndy(i) == -1) 
         if(dofGlobalBndy(i) < 0){
-            labelDirichlet(jDir++) = edgeLabellocal(i);
+            labelDirichlet(jDir++) = edgeLabellocal(i); //change here for mixed conditions
         }
     }
     
