@@ -17,10 +17,13 @@ $$
 \nabla \cdot (-\kappa \nabla u + \boldsymbol{\alpha} u) + \sigma u = f \quad \text{in } \Omega,
 $$
 
-subject to homogeneous Dirichlet boundary conditions:
+subject to :
 
 $$
-u = 0 \quad \text{on } \partial \Omega.
+u = g \quad \text{on } \partial \Omega_D.
+$$
+$$
+\kappa \nabla u \cdot \boldsymbol{n} = 0 \quad \text{on } \partial \Omega_N
 $$
 
 The MHM formulation decomposes the domain $\Omega$ into a set of polytopal elements $K \in \mathcal{P}_\mathcal{H}$.  
