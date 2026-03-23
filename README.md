@@ -20,10 +20,10 @@ $$
 subject to :
 
 $$
-u = g \quad \text{on } \partial \Omega_D.
+u = g \quad \text{on } \partial \Omega_D,
 $$
 $$
-\kappa \nabla u \cdot \boldsymbol{n} = 0 \quad \text{on } \partial \Omega_N
+\kappa \nabla u \cdot \boldsymbol{n} = 0 \quad \text{on } \partial \Omega_N.
 $$
 
 The MHM formulation decomposes the domain $\Omega$ into a set of polytopal elements $K \in \mathcal{P}_\mathcal{H}$.  
