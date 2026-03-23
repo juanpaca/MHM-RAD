@@ -51,7 +51,7 @@ func Pm = P1dc; // Polynomial order edge
 func Pk = P3; // Polynomial order volume
 
 real tol = 1e-12;
-real tolW0 = 1e-10; // Tolerance for singularity criterion
+real tolW0 = 1e-12; // Tolerance for singularity criterion
 
 // Folders
 string directory = (localStabinK ? "MHMUN" : "MHMGal") + "-EdgePartition-cM"+coarseMesh+"-edgeM"+edgeMesh+"-subM"+subMesh+"-L"+EkOrder+"K"+PkOrder;
@@ -188,17 +188,17 @@ for (int i = 0; i < NbTriangles; ++i) {
 // Model problem definitions
 real sigmaVal = 0.0, kappaVal = 1e-3; 
 func real kappa(){ return kappaVal; }
-func a1 = 0.0;
-func a2 = 1.0;
+func a1 = 2.0 / sqrt(5.0);
+func a2 = 1.0 / sqrt(5.0);
 func divalpha = 0.0;
 // nu = 0.5*div(alpha) + sigma  
 func real nu(){ return 0.5*divalpha + sigmaVal; }
 
 //source term for both cases
-func real f() {return 1.0;}
+func real f() {return 0.0;}
 
-// u = 1 on x=0 for y in [0, 0.5] AND y=0 for x in [0, 0.5]
-func g = ((x <= 1e-6 && y <= 0.2 + 1e-6) || (y <= 1e-6 && x <= 1.0 - 1e-10 )) ? 0.0 : 1.0; //discontinuous BC for skew advection
+// u = 1 on x=0 for y in [0, 0.2] AND y=0 for x in [0, 1.0]
+func g = (x <= 1e-10 && y <= 1.0 - 1e-10 && y >= 0.2 + 1e-10 ) ? 1.0 : 0.0; //discontinuous BC for skew advection
 
 
 int forder = 25;
@@ -219,7 +219,8 @@ for(int K=0; K<NbTriangles; K++) {
     int numDirichletPre = 0;
     for (int j = 0; j < NbPartinEdge; ++j) {
         int ii = locationMatrixBndy(K, j);
-        if (ii == -2 || ii == -1) numDirichletPre++;
+        //if (ii == -2 || ii == -4) numDirichletPre++;
+        if (ii < 0 ) numDirichletPre++;
     }
     
     // Evaluate criterion only for elements with no strong Dirichlet boundary
@@ -283,9 +284,9 @@ for(int K = 0; K < NbTriangles; K++){
     for(int i=0; i<Bndy.ndof; i++){
         real bx = bndyx[][i], by = bndyy[][i];
         if(abs(bx - x0) <= tol) { dofGlobalBndy(i) = -1; numDirichlet++;}
-        else if(abs(bx - x1) <= tol) { dofGlobalBndy(i) = -3; }
+        else if(abs(bx - x1) <= tol) { dofGlobalBndy(i) = -3; numDirichlet++; }
         else if(abs(by - y0) <= tol) { dofGlobalBndy(i) = -2; numDirichlet++; }
-        else if(abs(by - y1) <= tol) { dofGlobalBndy(i) = -4;  }
+        else if(abs(by - y1) <= tol) { dofGlobalBndy(i) = -4;  numDirichlet++;}
         else dofGlobalBndy(i) = i;
     }
 
@@ -295,7 +296,8 @@ for(int K = 0; K < NbTriangles; K++){
     int[int] labelDirichlet(max(numDirichlet, 1)); 
     int jDir=0;
     for(int i=0; i<Bndy.ndof; i++){
-        if(dofGlobalBndy(i) == -2 || dofGlobalBndy(i) == -1) {
+        //if(dofGlobalBndy(i) == -2 || dofGlobalBndy(i) == -1) 
+        if(dofGlobalBndy(i) < 0){
             labelDirichlet(jDir++) = edgeLabellocal(i);
         }
     }
