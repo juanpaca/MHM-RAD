@@ -1,5 +1,5 @@
-// MHM-UN implementation for a reaction-advection-diffusion problem with kernel W0 
-// Supports Mixed BCs (Dirichlet Top/Bottom, Neumann Homogeneous Left/Right)
+// MHM implementation for a reaction-advection-diffusion problem with kernel W0 
+// GENERALIZED VERSION: Supports Mixed BCs (Dirichlet Top/Bottom, Neumann Homogeneous Left/Right)
 
 include "getARGV.idp"
 include "ExtractDofsonBorder.idp"
@@ -35,6 +35,7 @@ func int duplicateElement (int[int] arr, int num){
 // Macros
 macro div(u,v) (dx(u) + dy(v)) // Divergence
 macro grad(u) [dx(u), dy(u)]   // Gradient
+macro laplacian(u) (dxx(u) + dyy(u)) // Laplacian operator
 macro alpha(a1,a2) [a1, a2]    // Advection vector
 
 // Command line arguments
@@ -42,10 +43,10 @@ int coarseMesh = getARGV("-cM", 3);
 int subMesh = getARGV("-subM", 0); 
 int edgeMesh = getARGV("-edgeM", 0);
 int EkOrder = getARGV("-EkO", 0);
-int PkOrder = getARGV("-PkO", 3);
+int PkOrder = getARGV("-PkO", 1);
+bool verboseinK = getARGV("-verboseinK", 1);
 bool exportVTKlocal = getARGV("-vtkLocal", 0);
-bool localStabinK = getARGV("-localStabK", 0); 
-real beta = getARGV("-beta", 0.99); //free parameter for controlling stabilization
+bool localStabinK = getARGV("-localStab", 1); 
 
 // Polynomial spaces
 func Pm = P0; // Polynomial order edge
@@ -187,7 +188,7 @@ for (int i = 0; i < NbTriangles; ++i) {
 }
 
 // Model problem definitions
-real sigmaVal = 0.0, kappaVal = 1.0; 
+real sigmaVal = 0.0, kappaVal = 1e-2; 
 func real kappa(){ return kappaVal; }
 func a1 = 0.0;
 func a2 = 1.0;
@@ -205,19 +206,19 @@ func real nu(){ return 0.5*divalpha + sigmaVal; }
 
 
 // //Analytical solution 2 (Mixed BCs for sigma = 0)
-    func u = (1.0/a2)*(y - ( sinh( (a2*y)/(2*kappaVal) ) )/(  sinh( a2/(2*kappaVal) )   ) *exp( (a2/(2*kappaVal))*(y-1) )  ) ;
-    func dxu = 0.0;
-    func dyu = (1.0/a2) - ( (exp((a2/(2*kappaVal))*(y-1))) / (2.0*kappaVal*sinh(a2/(2*kappaVal))) ) * ( cosh((a2*y)/(2*kappaVal)) + sinh((a2*y)/(2*kappaVal)) );
+   func u = (1.0/a2)*(y - ( sinh( (a2*y)/(2*kappaVal) ) )/(  sinh( a2/(2*kappaVal) )   ) *exp( (a2/(2*kappaVal))*(y-1) )  ) ;
+   func dxu = 0.0;
+   func dyu = (1.0/a2) - ( (exp((a2/(2*kappaVal))*(y-1))) / (2.0*kappaVal*sinh(a2/(2*kappaVal))) ) * ( cosh((a2*y)/(2*kappaVal)) + sinh((a2*y)/(2*kappaVal)) );
 
 //Analytical solution 3 (Mixed BCs for sigma > 0)
-//   func const = sqrt(a2^2 + 4*kappaVal*sigmaVal) /(2*kappaVal);
-//   func u = (1.0 / sigmaVal) * ( (sinh(const*(y-1))/sinh(const) )*exp((a2*y)/(2*kappaVal))  -  (sinh(const*(y))/sinh(const) )*exp((a2*(y-1))/(2*kappaVal)) + 1   ) ;
-//   func dxu = 0.0;
-//   func dyu = (1.0 / (sigmaVal * sinh(const))) * (
-//      exp((a2*y)/(2*kappaVal)) * (const*cosh(const*(y-1)) + (a2/(2*kappaVal))*sinh(const*(y-1))) 
-//      - 
-//      exp((a2*(y-1))/(2*kappaVal)) * (const*cosh(const*y) + (a2/(2*kappaVal))*sinh(const*y))
-//  );
+//  func const = sqrt(a2^2 + 4*kappaVal*sigmaVal) /(2*kappaVal);
+//  func u = (1.0 / sigmaVal) * ( (sinh(const*(y-1))/sinh(const) )*exp((a2*y)/(2*kappaVal))  -  (sinh(const*(y))/sinh(const) )*exp((a2*(y-1))/(2*kappaVal)) + 1   ) ;
+//  func dxu = 0.0;
+//  func dyu = (1.0 / (sigmaVal * sinh(const))) * (
+//     exp((a2*y)/(2*kappaVal)) * (const*cosh(const*(y-1)) + (a2/(2*kappaVal))*sinh(const*(y-1))) 
+//     - 
+//     exp((a2*(y-1))/(2*kappaVal)) * (const*cosh(const*y) + (a2/(2*kappaVal))*sinh(const*y))
+// );
 
 //source term for both cases
 func real f() {return 1.0;}
@@ -234,6 +235,7 @@ int forder = 25;
 // CPU OPTIMIZATION & W0 DETECTION: Cache for local matrices calculated in Pre-loop
 // =========================================================================
 matrix[int] AkArray(NbTriangles);
+real[int,int] tauInK(NbTriangles, Th[0].nt); //To save tau values if local stabilization is activated
 int[int] isAkComputed(NbTriangles);
 isAkComputed = 0;
 
@@ -248,25 +250,58 @@ for(int K=0; K<NbTriangles; K++) {
         int ii = locationMatrixBndy(K, j);
         if (ii == -2 || ii == -4) numDirichletPre++;
     }
+
+    //Precomputing tau in each element
+    mesh auxTh = Th[K];
+    fespace PhK(auxTh, P0);
+    PhK tauStab ;
+    tauStab[] = 0.0; // Default value if local stabilization is not activated
+    if(localStabinK){
+            real mk; 
+            if (PkOrder == 1) {
+                // P1 case
+                    mk = 1.0/3.0;
+                } else if (PkOrder == 2) {
+                    // P2 case
+                    mk = 1.0/(48.0);
+                } else if (PkOrder == 3){
+                    // P3 case
+                    mk = 1.0/(149.1);
+                }
+            
+            PhK pecletNumber1, pecletNumber2, maxPeclet1, maxPeclet2;
+            pecletNumber2 = (mk*sqrt(a1^2 + a2^2)*hTriangle)/(kappaVal);
+            maxPeclet2 = max(pecletNumber2 , 1);
+
+            if(sigmaVal != 0.0){
+                pecletNumber1 = (2.0*kappaVal) / (mk * hTriangle^2 * sigmaVal) ;
+                maxPeclet1 = max(pecletNumber1 ,1);
+                tauStab = mk * hTriangle^2 / (sigmaVal*mk* hTriangle^2 *maxPeclet1 + 2* kappaVal *maxPeclet2);
+            }else{
+                tauStab = mk * hTriangle^2 / ( 2* kappaVal *maxPeclet2);
+            }
+                
+
+                tauInK(K, :) = tauStab[]; //saving values for each element for the local problems
+        }
+
+    
     
     // Evaluate criterion only for elements with no strong Dirichlet boundary
     if (numDirichletPre == 0) {
-        mesh auxTh = Th[K];
+        
         fespace VhK(auxTh, Pk);
         VhK etaK, varphi;
-        
-        varf ahK(etaK, varphi) = int2d(auxTh)(kappa()*grad(etaK)'*grad(varphi)
+ 
+        varf ahK(etaK, varphi) = int2d(auxTh , qforder =forder , optimize = 0)(kappa()*grad(etaK)'*grad(varphi)
                                 + 0.5*(alpha(a1,a2)'*grad(etaK))*varphi
                                 - 0.5*etaK*(alpha(a1,a2)'*grad(varphi))
-                                + nu()*(etaK*varphi)
-                                //UNUSUAL stabilization bilinear term
-                                - tauStab * (sigmaVal*etaK 
-                                + divalpha*etaK + alpha(a1,a2)'*grad(etaK)
-                                - grad(kappaInterpK)'*grad(etaK) - kappaInterpK*laplacian(etaK)) * 
-                                (sigmaVal*varphi 
-                                - divalpha*varphi - alpha(a1,a2)'*grad(varphi)
-                                - grad(kappaInterpK)'*grad(varphi) - kappaInterpK*laplacian(varphi))                                    
-                                );
+                                + nu()*(etaK*varphi))
+                                + int2d(auxTh , qforder =forder , optimize = 0)(
+                                    - tauStab * (sigmaVal*etaK  + alpha(a1,a2)'*grad(etaK) - kappaVal*laplacian(etaK)) 
+                                          * (sigmaVal*varphi  - alpha(a1,a2)'*grad(varphi) - kappaVal*laplacian(varphi))
+                                )
+                                ;
         
         AkArray[K] = ahK(VhK, VhK); 
         isAkComputed[K] = 1;        
@@ -308,6 +343,11 @@ for(int K = 0; K < NbTriangles; K++){
     int ndofVhK = VhK.ndof;
     VhK[int] etalK(NbPartinEdge);
     VhK etafK, etaK, varphi, eta0K; 
+    fespace PhK(auxTh, P0);
+    PhK tauStab = 0.0  ;
+    tauStab[] = tauInK(K, :); // Retrieve pre-computed tau for this element
+
+    if(verboseinK) cout << "Element " << K << ": tauStab = " << tauStab[] << endl;
 
     fespace Bndy(auxEh, Pm);
     Bndy bndyx = x, bndyy = y;
@@ -339,68 +379,6 @@ for(int K = 0; K < NbTriangles; K++){
     int sizeLabelDirichlet = duplicateElement(labelDirichlet, jDir);
     int[int] labelDirichletNoDup = labelDirichlet(0:sizeLabelDirichlet-1); 
 
-
-        // =============================================================================
-        //  LOCAL CALCULATIONS FOR STABILIZATION
-        // =============================================================================
-        
-        fespace PhK(Th[K],P0); //local space of constants per element t \in ThK
-        PhK kappaMin, pNormKappa, tauStab = 0, pecletNumber = 0;
-        real mk;
-        VhK kappaInterpK = kappa(); //Interpolation of kappa in VhK
-        if(localStab){
-        {
-                if (PkOrder == 1) {
-                // P1 case
-                mk = 1.0/3.0;
-                } else if (PkOrder == 2) {
-                    // P2 case
-                    mk = 1.0/(48.0);
-                } else if (PkOrder == 3){
-                    // P3 case
-                    mk = 1.0/(149.1);
-                }
-                
-                //Calculation of kappaMin in each triangle of ThK
-                for(int t = 0; t < Th[K].nt ; t++){
-                    mesh tTriangle = trunc(Th[K], nuTriangle == t); //Isolate triangle t
-                    fespace VhKt(tTriangle, Pk);
-
-                    VhKt kappalocalt = kappa(); //Interpolation of kappa in t
-                    kappaMin[][t] = kappalocalt[].min;
-                    VhKt dxkappalocalt = dx(kappalocalt);
-                    VhKt dykappalocalt = dy(kappalocalt);
-                    VhKt gradkappalocalt = sqrt(dxkappalocalt^2 + dykappalocalt^2);
-
-                    //W^{1,p} norm of kappa in triangle t
-                    real p = 60.0;
-                    pNormKappa[][t] = (int2d(tTriangle )(
-                                kappalocalt^p   ) )^(2.0/p) 
-                                + tTriangle.hmax^2 *(int2d(tTriangle )(
-                                gradkappalocalt^p   ) )^(2.0/p) ;
-                }
-            }
-            {
-                if(sigmaVal != 0.0) 
-                    pecletNumber1 = (2.0*kappaMin) / (mk * hTriangle^2 * sigmaVal);
-                
-                pecletNumber2 = (mk * sqrt(a1^2 + a2^2) * hTriangle) / (kappaMin);
-
-                PhK maxPeclet1 = max(pecletNumber1, 1.0);
-                PhK maxPeclet2 = max(pecletNumber2, 1.0);
-
-                tauStab = (mk * beta * hTriangle^2) / 
-                            (mk * sigmaVal * maxPeclet1 * hTriangle^2 + 2.0 * (mk + 1) *(pNormKappa/kappaMin )* maxPeclet2 );
-                
-                if (verboseInK) {
-                    cout << "Minimum Peclet number: " << pecletNumber[].min << endl;
-                    cout << "Maximum tau parameter: " << tauStab[].max << endl;
-                }
-
-            }
-        }
-
-
     matrix AAk;
     // Condition 1: Element does not touch Dirichlet edges. Saddle point might be needed.
     if(numDirichlet == 0){
@@ -408,19 +386,15 @@ for(int K = 0; K < NbTriangles; K++){
         if(isAkComputed[K] == 1){
             Ak = AkArray[K];
         } else {
-            varf ahK(etaK, varphi) = int2d(auxTh)(kappa()*grad(etaK)'*grad(varphi)
+            varf ahK(etaK, varphi) = int2d(auxTh , qforder =forder , optimize = 0 )(kappa()*grad(etaK)'*grad(varphi)
                                     + 0.5*(alpha(a1,a2)'*grad(etaK))*varphi
                                     - 0.5*etaK*(alpha(a1,a2)'*grad(varphi))
-                                    + nu()*(etaK*varphi)
-                                    
-                                    //UNUSUAL stabilization bilinear term
-                                    - tauStab * (sigmaVal*etaK 
-                                    + divalpha*etaK + alpha(a1,a2)'*grad(etaK)
-                                    - grad(kappaInterpK)'*grad(etaK) - kappaInterpK*laplacian(etaK)) * 
-                                    (sigmaVal*varphi 
-                                    - divalpha*varphi - alpha(a1,a2)'*grad(varphi)
-                                    - grad(kappaInterpK)'*grad(varphi) - kappaInterpK*laplacian(varphi))
-                                    );
+                                    + nu()*(etaK*varphi) )
+                                    + int2d(auxTh , qforder =forder , optimize = 0 )(
+                                    - tauStab * (sigmaVal*etaK  + alpha(a1,a2)'*grad(etaK) - kappaVal*laplacian(etaK)) 
+                                          * (sigmaVal*varphi  - alpha(a1,a2)'*grad(varphi) - kappaVal*laplacian(varphi))
+                                    )
+                                    ;
             Ak = ahK(VhK,VhK);
         }
         
@@ -454,17 +428,13 @@ for(int K = 0; K < NbTriangles; K++){
         }
     } else {
         // Condition 2: Strong Dirichlet imposed
-        varf ahK(etaK, varphi) = int2d(auxTh)(kappa()*grad(etaK)'*grad(varphi)
+        varf ahK(etaK, varphi) = int2d(auxTh , qforder =forder , optimize = 0)(kappa()*grad(etaK)'*grad(varphi)
                                 + 0.5*(alpha(a1,a2)'*grad(etaK))*varphi
                                 - 0.5*etaK*(alpha(a1,a2)'*grad(varphi))
-                                + nu()*(etaK*varphi)
-                            //UNUSUAL stabilization bilinear term
-                                - tauStab * (sigmaVal*etaK 
-                                + divalpha*etaK + alpha(a1,a2)'*grad(etaK)
-                                - grad(kappaInterpK)'*grad(etaK) - kappaInterpK*laplacian(etaK)) * 
-                                (sigmaVal*varphi 
-                                - divalpha*varphi - alpha(a1,a2)'*grad(varphi)
-                                - grad(kappaInterpK)'*grad(varphi) - kappaInterpK*laplacian(varphi))                                    
+                                + nu()*(etaK*varphi) )
+                                + int2d(auxTh , qforder =forder , optimize = 0 )(
+                                    - tauStab * (sigmaVal*etaK  + alpha(a1,a2)'*grad(etaK) - kappaVal*laplacian(etaK)) 
+                                          * (sigmaVal*varphi  - alpha(a1,a2)'*grad(varphi) - kappaVal*laplacian(varphi))
                                 )
                                 + on(labelDirichletNoDup, etaK=gBC);    
         matrix Ak = ahK(VhK,VhK);
@@ -474,20 +444,14 @@ for(int K = 0; K < NbTriangles; K++){
     
     real[int] Fkf(ndofVhK);
     if(numDirichlet == 0){
-        varf fhKf(unused, varphi) = int2d(auxTh, qforder=forder)(f()*varphi
-                                //UNUSUAL stabilization linear form
-                                - tauStab * f() * (sigmaVal*varphi 
-                                - divalpha*varphi - alpha(a1,a2)'*grad(varphi)
-                                - grad(kappaInterpK)'*grad(varphi) - kappaInterpK*laplacian(varphi))                                    
+        varf fhKf(unused, varphi) = int2d(auxTh , qforder =forder , optimize = 0 )(f()*varphi) + int2d(auxTh , qforder =forder , optimize = 0)(
+                                    - tauStab * (sigmaVal*varphi  - alpha(a1,a2)'*grad(varphi) - kappaVal*laplacian(varphi) )
                                 );
         Fkf = fhKf(0, VhK);
     } else {
-        varf fhKf(unused, varphi) = int2d(auxTh, qforder=forder)(f()*varphi
-                                 //UNUSUAL stabilization linear form
-                                - tauStab * f() * (sigmaVal*varphi 
-                                - divalpha*varphi - alpha(a1,a2)'*grad(varphi)
-                                - grad(kappaInterpK)'*grad(varphi) - kappaInterpK*laplacian(varphi))  
-                                ) + on(labelDirichletNoDup, unused=gBC);
+        varf fhKf(unused, varphi) = int2d(auxTh , qforder =forder , optimize = 0 )(f()*varphi) + int2d(auxTh , qforder =forder , optimize = 0 )(
+                                    - tauStab * (sigmaVal*varphi  - alpha(a1,a2)'*grad(varphi) - kappaVal*laplacian(varphi) )
+                                    ) + on(labelDirichletNoDup, unused=gBC);
         Fkf = fhKf(0, VhK);   
     }
 
@@ -577,7 +541,7 @@ for(int K = 0; K < NbTriangles; K++){
         
         matrix BhK = Mfketal' * MphiK'; // Size: NbPartinEdge x 1
 
-        real f0Kval = int2d(auxTh, qforder=forder)(f());
+        real f0Kval = int2d(auxTh )(f() - tauStab * f() * (sigmaVal - divalpha) );
         eFg[uGlobalIdx] = -f0Kval; 
 
         for(int n=0; n<NbPartinEdge; n++){
@@ -677,7 +641,10 @@ for(int K = 0; K < NbTriangles; K++){
         fespace VhViz(ThKViz, P1);
         VhViz uhHKViz = auxuHhK;
         int[int] Order = [1];
-        savevtk(fileparaviewPrimal+"/uh-"+K+"-cM"+coarseMesh+"-eM"+edgeMesh+".vtu", ThKViz, uhHKViz, dataname="$u_{Hh}^{}$", order=Order);
+        if(localStabinK){
+                    savevtk(fileparaviewPrimal+"/uh-"+K+"-cM"+coarseMesh+"-eM"+edgeMesh+".vtu", ThKViz, uhHKViz, dataname="$u_{Hh}^{}$-(MHM-UN)", order=Order);
+        }
+        else savevtk(fileparaviewPrimal+"/uh-"+K+"-cM"+coarseMesh+"-eM"+edgeMesh+".vtu", ThKViz, uhHKViz, dataname="$u_{Hh}^{}$-(MHM-Gal)", order=Order);
     }
 }
 
