@@ -349,7 +349,7 @@ for(int K = 0; K < NbTriangles; K++){
     PhK tauStab = 0.0 ;
     tauStab[] = tauInK(K, :); // Retrieve pre-computed tau for this element
 
-    //if(verboseinK) cout << "Element " << K << ": tauStab = " << tauStab[] << endl;
+    if(verboseinK) cout << "Element " << K << ": tauStab = " << tauStab[] << endl;
 
     fespace Bndy(auxEh, Pm);
     Bndy bndyx = x, bndyy = y;
