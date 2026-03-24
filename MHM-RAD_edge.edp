@@ -39,7 +39,7 @@ macro laplacian(u) (dxx(u) + dyy(u)) // Laplacian operator
 macro alpha(a1,a2) [a1, a2]    // Advection vector
 
 // Command line arguments
-int coarseMesh = getARGV("-cM", 3);
+int coarseMesh = getARGV("-cM", 0);
 int subMesh = getARGV("-subM", 0); 
 int edgeMesh = getARGV("-edgeM", 0);
 int EkOrder = getARGV("-EkO", 0);
@@ -49,8 +49,8 @@ bool exportVTKlocal = getARGV("-vtkLocal", 0);
 bool localStabinK = getARGV("-localStab", 1); 
 
 // Polynomial spaces
-func Pm = P0; // Polynomial order edge
-func Pk = P1; // Polynomial order volume
+func Pm = P1dc; // Polynomial order edge
+func Pk = P3; // Polynomial order volume
 
 real tol = 1e-12;
 real tolW0 = 1e-10; // Tolerance for singularity criterion
@@ -188,7 +188,7 @@ for (int i = 0; i < NbTriangles; ++i) {
 }
 
 // Model problem definitions
-real sigmaVal = 0.0, kappaVal = 1e-2; 
+real sigmaVal = 0.0, kappaVal = 1.0; 
 func real kappa(){ return kappaVal; }
 func a1 = 0.0;
 func a2 = 1.0;
@@ -206,19 +206,19 @@ func real nu(){ return 0.5*divalpha + sigmaVal; }
 
 
 // //Analytical solution 2 (Mixed BCs for sigma = 0)
-   func u = (1.0/a2)*(y - ( sinh( (a2*y)/(2*kappaVal) ) )/(  sinh( a2/(2*kappaVal) )   ) *exp( (a2/(2*kappaVal))*(y-1) )  ) ;
-   func dxu = 0.0;
-   func dyu = (1.0/a2) - ( (exp((a2/(2*kappaVal))*(y-1))) / (2.0*kappaVal*sinh(a2/(2*kappaVal))) ) * ( cosh((a2*y)/(2*kappaVal)) + sinh((a2*y)/(2*kappaVal)) );
+     func u = (1.0/a2)*(y - ( sinh( (a2*y)/(2*kappaVal) ) )/(  sinh( a2/(2*kappaVal) )   ) *exp( (a2/(2*kappaVal))*(y-1) )  ) ;
+     func dxu = 0.0;
+     func dyu = (1.0/a2) - ( (exp((a2/(2*kappaVal))*(y-1))) / (2.0*kappaVal*sinh(a2/(2*kappaVal))) ) * ( cosh((a2*y)/(2*kappaVal)) + sinh((a2*y)/(2*kappaVal)) );
 
 //Analytical solution 3 (Mixed BCs for sigma > 0)
-//  func const = sqrt(a2^2 + 4*kappaVal*sigmaVal) /(2*kappaVal);
-//  func u = (1.0 / sigmaVal) * ( (sinh(const*(y-1))/sinh(const) )*exp((a2*y)/(2*kappaVal))  -  (sinh(const*(y))/sinh(const) )*exp((a2*(y-1))/(2*kappaVal)) + 1   ) ;
-//  func dxu = 0.0;
-//  func dyu = (1.0 / (sigmaVal * sinh(const))) * (
-//     exp((a2*y)/(2*kappaVal)) * (const*cosh(const*(y-1)) + (a2/(2*kappaVal))*sinh(const*(y-1))) 
-//     - 
-//     exp((a2*(y-1))/(2*kappaVal)) * (const*cosh(const*y) + (a2/(2*kappaVal))*sinh(const*y))
-// );
+//    func const = sqrt(a2^2 + 4*kappaVal*sigmaVal) /(2*kappaVal);
+//    func u = (1.0 / sigmaVal) * ( (sinh(const*(y-1))/sinh(const) )*exp((a2*y)/(2*kappaVal))  -  (sinh(const*(y))/sinh(const) )*exp((a2*(y-1))/(2*kappaVal)) + 1   ) ;
+//    func dxu = 0.0;
+//    func dyu = (1.0 / (sigmaVal * sinh(const))) * (
+//       exp((a2*y)/(2*kappaVal)) * (const*cosh(const*(y-1)) + (a2/(2*kappaVal))*sinh(const*(y-1))) 
+//       - 
+//       exp((a2*(y-1))/(2*kappaVal)) * (const*cosh(const*y) + (a2/(2*kappaVal))*sinh(const*y))
+//   );
 
 //source term for both cases
 func real f() {return 1.0;}
@@ -236,6 +236,8 @@ int forder = 25;
 // =========================================================================
 matrix[int] AkArray(NbTriangles);
 real[int,int] tauInK(NbTriangles, Th[0].nt); //To save tau values if local stabilization is activated
+tauInK = 0.0; // Initialize with default values
+//cout << "matrix tauinK: " <<tauInK << endl;
 int[int] isAkComputed(NbTriangles);
 isAkComputed = 0;
 
@@ -255,7 +257,7 @@ for(int K=0; K<NbTriangles; K++) {
     mesh auxTh = Th[K];
     fespace PhK(auxTh, P0);
     PhK tauStab ;
-    tauStab[] = 0.0; // Default value if local stabilization is not activated
+    tauStab = 0.0; // Default value if local stabilization is not activated
     if(localStabinK){
             real mk; 
             if (PkOrder == 1) {
@@ -269,7 +271,7 @@ for(int K=0; K<NbTriangles; K++) {
                     mk = 1.0/(149.1);
                 }
             
-            PhK pecletNumber1, pecletNumber2, maxPeclet1, maxPeclet2;
+            PhK pecletNumber1=0, pecletNumber2=0, maxPeclet1=0, maxPeclet2=0;
             pecletNumber2 = (mk*sqrt(a1^2 + a2^2)*hTriangle)/(kappaVal);
             maxPeclet2 = max(pecletNumber2 , 1);
 
@@ -344,10 +346,10 @@ for(int K = 0; K < NbTriangles; K++){
     VhK[int] etalK(NbPartinEdge);
     VhK etafK, etaK, varphi, eta0K; 
     fespace PhK(auxTh, P0);
-    PhK tauStab = 0.0  ;
+    PhK tauStab = 0.0 ;
     tauStab[] = tauInK(K, :); // Retrieve pre-computed tau for this element
 
-    if(verboseinK) cout << "Element " << K << ": tauStab = " << tauStab[] << endl;
+    //if(verboseinK) cout << "Element " << K << ": tauStab = " << tauStab[] << endl;
 
     fespace Bndy(auxEh, Pm);
     Bndy bndyx = x, bndyy = y;
@@ -629,8 +631,8 @@ for(int K = 0; K < NbTriangles; K++){
         uHhg(K, j) = auxuHhK[][j];
     }
     
-    real L2errK = int2d(Th[K])((u - auxuHhK)^2);
-    real H1semierrK = int2d(Th[K])((dx(auxuHhK)- dxu)^2 +(dy(auxuHhK) - dyu)^2);
+    real L2errK = int2d(Th[K] , qforder = forder , optimize =0 )((u - auxuHhK)^2);
+    real H1semierrK = int2d(Th[K] ,  qforder = forder , optimize =0)((dx(auxuHhK)- dxu)^2 +(dy(auxuHhK) - dyu)^2);
     
     globalSumL2 += L2errK;
     globalSumH1semi += H1semierrK;
