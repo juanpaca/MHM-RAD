@@ -1,4 +1,4 @@
-// MHM implementation for a reaction-advection-diffusion problem with kernel W0 
+// MHM-UN implementation for a reaction-advection-diffusion problem with kernel W0 
 // GENERALIZED VERSION: Supports Mixed BCs (Dirichlet Top/Bottom, Neumann Homogeneous Left/Right)
 
 include "getARGV.idp"
@@ -43,14 +43,14 @@ int coarseMesh = getARGV("-cM", 0);
 int subMesh = getARGV("-subM", 0); 
 int edgeMesh = getARGV("-edgeM", 0);
 int EkOrder = getARGV("-EkO", 0);
-int PkOrder = getARGV("-PkO", 1);
+int PkOrder = getARGV("-PkO", 2);
 bool verboseinK = getARGV("-verboseinK", 1);
 bool exportVTKlocal = getARGV("-vtkLocal", 0);
 bool localStabinK = getARGV("-localStab", 1); 
 
 // Polynomial spaces
-func Pm = P1dc; // Polynomial order edge
-func Pk = P3; // Polynomial order volume
+func Pm = P0; // Polynomial order edge
+func Pk = P2; // Polynomial order volume
 
 real tol = 1e-12;
 real tolW0 = 1e-10; // Tolerance for singularity criterion
@@ -259,7 +259,8 @@ for(int K=0; K<NbTriangles; K++) {
     PhK tauStab ;
     tauStab = 0.0; // Default value if local stabilization is not activated
     if(localStabinK){
-            real mk; 
+            real mk;
+            real hK = sqrt(area); 
             if (PkOrder == 1) {
                 // P1 case
                     mk = 1.0/3.0;
@@ -272,15 +273,15 @@ for(int K=0; K<NbTriangles; K++) {
                 }
             
             PhK pecletNumber1=0, pecletNumber2=0, maxPeclet1=0, maxPeclet2=0;
-            pecletNumber2 = (mk*sqrt(a1^2 + a2^2)*hTriangle)/(kappaVal);
+            pecletNumber2 = (mk*sqrt(a1^2 + a2^2)*hK)/(kappaVal);
             maxPeclet2 = max(pecletNumber2 , 1);
 
             if(sigmaVal != 0.0){
-                pecletNumber1 = (2.0*kappaVal) / (mk * hTriangle^2 * sigmaVal) ;
+                pecletNumber1 = (2.0*kappaVal) / (mk * area * sigmaVal) ;
                 maxPeclet1 = max(pecletNumber1 ,1);
-                tauStab = mk * hTriangle^2 / (sigmaVal*mk* hTriangle^2 *maxPeclet1 + 2* kappaVal *maxPeclet2);
+                tauStab = mk * area / (sigmaVal*mk* area *maxPeclet1 + 2* kappaVal *maxPeclet2);
             }else{
-                tauStab = mk * hTriangle^2 / ( 2* kappaVal *maxPeclet2);
+                tauStab = mk * area / ( 2* kappaVal *maxPeclet2);
             }
                 
 
