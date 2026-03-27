@@ -42,15 +42,15 @@ macro alpha(a1,a2) [a1, a2]    // Advection vector
 int coarseMesh = getARGV("-cM", 0);
 int subMesh = getARGV("-subM", 0); 
 int edgeMesh = getARGV("-edgeM", 0);
-int EkOrder = getARGV("-EkO", 0);
-int PkOrder = getARGV("-PkO", 2);
+int EkOrder = getARGV("-EkO", 1);
+int PkOrder = getARGV("-PkO", 3);
 bool verboseinK = getARGV("-verboseinK", 1);
 bool exportVTKlocal = getARGV("-vtkLocal", 0);
 bool localStabinK = getARGV("-localStab", 1); 
 
 // Polynomial spaces
-func Pm = P0; // Polynomial order edge
-func Pk = P2; // Polynomial order volume
+func Pm = P1dc; // Polynomial order edge
+func Pk = P3; // Polynomial order volume
 
 real tol = 1e-12;
 real tolW0 = 1e-10; // Tolerance for singularity criterion
@@ -188,7 +188,7 @@ for (int i = 0; i < NbTriangles; ++i) {
 }
 
 // Model problem definitions
-real sigmaVal = 0.0, kappaVal = 1.0; 
+real sigmaVal = 1.0, kappaVal = 1.0; 
 func real kappa(){ return kappaVal; }
 func a1 = 0.0;
 func a2 = 1.0;
@@ -206,19 +206,18 @@ func real nu(){ return 0.5*divalpha + sigmaVal; }
 
 
 // //Analytical solution 2 (Mixed BCs for sigma = 0)
-     func u = (1.0/a2)*(y - ( sinh( (a2*y)/(2*kappaVal) ) )/(  sinh( a2/(2*kappaVal) )   ) *exp( (a2/(2*kappaVal))*(y-1) )  ) ;
-     func dxu = 0.0;
-     func dyu = (1.0/a2) - ( (exp((a2/(2*kappaVal))*(y-1))) / (2.0*kappaVal*sinh(a2/(2*kappaVal))) ) * ( cosh((a2*y)/(2*kappaVal)) + sinh((a2*y)/(2*kappaVal)) );
+    //  func u = (1.0/a2)*(y - ( sinh( (a2*y)/(2*kappaVal) ) )/(  sinh( a2/(2*kappaVal) )   ) *exp( (a2/(2*kappaVal))*(y-1) )  ) ;
+    //  func dxu = 0.0;
+    //  func dyu = (1.0/a2) - ( (exp((a2/(2*kappaVal))*(y-1))) / (2.0*kappaVal*sinh(a2/(2*kappaVal))) ) * ( cosh((a2*y)/(2*kappaVal)) + sinh((a2*y)/(2*kappaVal)) );
 
 //Analytical solution 3 (Mixed BCs for sigma > 0)
-//    func const = sqrt(a2^2 + 4*kappaVal*sigmaVal) /(2*kappaVal);
-//    func u = (1.0 / sigmaVal) * ( (sinh(const*(y-1))/sinh(const) )*exp((a2*y)/(2*kappaVal))  -  (sinh(const*(y))/sinh(const) )*exp((a2*(y-1))/(2*kappaVal)) + 1   ) ;
-//    func dxu = 0.0;
-//    func dyu = (1.0 / (sigmaVal * sinh(const))) * (
-//       exp((a2*y)/(2*kappaVal)) * (const*cosh(const*(y-1)) + (a2/(2*kappaVal))*sinh(const*(y-1))) 
-//       - 
-//       exp((a2*(y-1))/(2*kappaVal)) * (const*cosh(const*y) + (a2/(2*kappaVal))*sinh(const*y))
-//   );
+   func const = sqrt(a2^2 + 4*kappaVal*sigmaVal) /(2*kappaVal);
+   func u = (1.0 / sigmaVal) * ( (sinh(const*(y-1))/sinh(const) )*exp((a2*y)/(2*kappaVal))  -  (sinh(const*(y))/sinh(const) )*exp((a2*(y-1))/(2*kappaVal)) + 1   ) ;
+   func dxu = 0.0;
+   func dyu = (1.0 / (sigmaVal * sinh(const))) * (
+      exp((a2*y)/(2*kappaVal)) * (const*cosh(const*(y-1)) + (a2/(2*kappaVal))*sinh(const*(y-1))) 
+      - 
+      exp((a2*(y-1))/(2*kappaVal)) * (const*cosh(const*y) + (a2/(2*kappaVal))*sinh(const*y)) );
 
 //source term for both cases
 func real f() {return 1.0;}
@@ -260,7 +259,7 @@ for(int K=0; K<NbTriangles; K++) {
     tauStab = 0.0; // Default value if local stabilization is not activated
     if(localStabinK){
             real mk;
-            real hK = sqrt(area); 
+            real hK = sqrt(2*area); 
             if (PkOrder == 1) {
                 // P1 case
                     mk = 1.0/3.0;
@@ -277,11 +276,11 @@ for(int K=0; K<NbTriangles; K++) {
             maxPeclet2 = max(pecletNumber2 , 1);
 
             if(sigmaVal != 0.0){
-                pecletNumber1 = (2.0*kappaVal) / (mk * area * sigmaVal) ;
+                pecletNumber1 = (2.0*kappaVal) / (mk * 2 * area * sigmaVal) ;
                 maxPeclet1 = max(pecletNumber1 ,1);
-                tauStab = mk * area / (sigmaVal*mk* area *maxPeclet1 + 2* kappaVal *maxPeclet2);
+                tauStab = mk * 2* area / (sigmaVal*mk* 2 * area *maxPeclet1 + 2* kappaVal *maxPeclet2);
             }else{
-                tauStab = mk * area / ( 2* kappaVal *maxPeclet2);
+                tauStab = mk * 2* area / ( 2* kappaVal *maxPeclet2);
             }
                 
 
