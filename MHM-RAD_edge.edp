@@ -258,6 +258,7 @@ for(int K=0; K<NbTriangles; K++) {
     PhK tauStab ;
     tauStab = 0.0; // Default value if local stabilization is not activated
     if(localStabinK){
+
             real mk;
             real hK = sqrt(2*area); 
             if (PkOrder == 1) {
@@ -271,16 +272,36 @@ for(int K=0; K<NbTriangles; K++) {
                     mk = 1.0/(149.1);
                 }
             
+            //Calculation of kappaMin in each triangle of ThK
+            PhK sigmaMax, kappaMin, pNormKappa, tauStab, pecletNumber;
+
+                for(int t = 0; t < Th[K].nt ; t++){
+                    mesh tTrianglebase = trunc(Th[K], nuTriangle == t); //Isolate triangle t
+                    mesh tTriangle = trunc(tTrianglebase, 1, split=2^2);
+                    fespace VhKt(tTriangle, Pk);
+
+                    VhKt kappalocalt = kappa(); //Interpolation of kappa in t
+                    kappaMin[][t] = kappalocalt[].min;
+                    VhKt gradkappalocalt = sqrt(dx(kappalocalt)^2 + dy(kappalocalt)^2);
+
+                    //W^{1,p} norm of kappa in triangle t
+                    real p = 60.0;
+                    pNormKappa[][t] = (int2d(tTriangle )(
+                                kappalocalt^p   ) )^(2.0/p) 
+                                + tTriangle.hmax^2 *(int2d(tTriangle )(
+                                gradkappalocalt^p   ) )^(2.0/p) ;
+                }
+            
             PhK pecletNumber1=0, pecletNumber2=0, maxPeclet1=0, maxPeclet2=0;
-            pecletNumber2 = (mk*sqrt(a1^2 + a2^2)*hK)/(kappaVal);
+            pecletNumber2 = (mk*sqrt(a1^2 + a2^2)*hK)/(kappaMin);
             maxPeclet2 = max(pecletNumber2 , 1);
 
             if(sigmaVal != 0.0){
-                pecletNumber1 = (2.0*kappaVal) / (mk * 2 * area * sigmaVal) ;
+                pecletNumber1 = (2.0*kappaMin) / (mk * 2 * area * sigmaVal) ;
                 maxPeclet1 = max(pecletNumber1 ,1);
-                tauStab = mk * 2* area / (sigmaVal*mk* 2 * area *maxPeclet1 + 2* kappaVal *maxPeclet2);
+                tauStab = mk * 2* area / (sigmaVal*mk* 2 * area *maxPeclet1 + 2* (pNormKappa / kappaMin )*maxPeclet2);
             }else{
-                tauStab = mk * 2* area / ( 2* kappaVal *maxPeclet2);
+                tauStab = mk * 2* area / ( 2* (pNormKappa / kappaMin ) *maxPeclet2);
             }
                 
 
@@ -300,8 +321,8 @@ for(int K=0; K<NbTriangles; K++) {
                                 - 0.5*etaK*(alpha(a1,a2)'*grad(varphi))
                                 + nu()*(etaK*varphi))
                                 + int2d(auxTh , qforder =forder , optimize = 0)(
-                                    - tauStab * (sigmaVal*etaK  + alpha(a1,a2)'*grad(etaK) - kappaVal*laplacian(etaK)) 
-                                          * (sigmaVal*varphi  - alpha(a1,a2)'*grad(varphi) - kappaVal*laplacian(varphi))
+                                    - tauStab * (sigmaVal*etaK  + alpha(a1,a2)'*grad(etaK) - kappa()*laplacian(etaK)) 
+                                          * (sigmaVal*varphi  - alpha(a1,a2)'*grad(varphi) - kappa()*laplacian(varphi))
                                 )
                                 ;
         
@@ -349,7 +370,7 @@ for(int K = 0; K < NbTriangles; K++){
     PhK tauStab = 0.0 ;
     tauStab[] = tauInK(K, :); // Retrieve pre-computed tau for this element
 
-    if(verboseinK) cout << "Element " << K << ": tauStab = " << tauStab[] << endl;
+    if(verboseinK) cout << "Element " << K << ": tauStab = " << tauStab[].max << endl;
 
     fespace Bndy(auxEh, Pm);
     Bndy bndyx = x, bndyy = y;
@@ -393,8 +414,8 @@ for(int K = 0; K < NbTriangles; K++){
                                     - 0.5*etaK*(alpha(a1,a2)'*grad(varphi))
                                     + nu()*(etaK*varphi) )
                                     + int2d(auxTh , qforder =forder , optimize = 0 )(
-                                    - tauStab * (sigmaVal*etaK  + alpha(a1,a2)'*grad(etaK) - kappaVal*laplacian(etaK)) 
-                                          * (sigmaVal*varphi  - alpha(a1,a2)'*grad(varphi) - kappaVal*laplacian(varphi))
+                                    - tauStab * (sigmaVal*etaK  + alpha(a1,a2)'*grad(etaK) - kappa()*laplacian(etaK)) 
+                                          * (sigmaVal*varphi  - alpha(a1,a2)'*grad(varphi) - kappa()*laplacian(varphi))
                                     )
                                     ;
             Ak = ahK(VhK,VhK);
@@ -435,8 +456,8 @@ for(int K = 0; K < NbTriangles; K++){
                                 - 0.5*etaK*(alpha(a1,a2)'*grad(varphi))
                                 + nu()*(etaK*varphi) )
                                 + int2d(auxTh , qforder =forder , optimize = 0 )(
-                                    - tauStab * (sigmaVal*etaK  + alpha(a1,a2)'*grad(etaK) - kappaVal*laplacian(etaK)) 
-                                          * (sigmaVal*varphi  - alpha(a1,a2)'*grad(varphi) - kappaVal*laplacian(varphi))
+                                    - tauStab * (sigmaVal*etaK  + alpha(a1,a2)'*grad(etaK) - kappa()*laplacian(etaK)) 
+                                          * (sigmaVal*varphi  - alpha(a1,a2)'*grad(varphi) - kappa()*laplacian(varphi))
                                 )
                                 + on(labelDirichletNoDup, etaK=gBC);    
         matrix Ak = ahK(VhK,VhK);
