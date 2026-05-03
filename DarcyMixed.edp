@@ -1,0 +1,52 @@
+load "Element_Mixte"
+load "iovtk"
+
+// Mesh definition
+int nElements = 100;
+mesh Th = square(nElements, nElements);
+
+// Permeability field K(x,y) (Variable, Gaussian bump in the center)
+func K = 1.0 + 10.0*exp(-((x-0.5)^2 + (y-0.5)^2)/0.02);
+
+// Finite Element Spaces (RT0 for velocity, P0 for pressure)
+fespace Vh(Th, RT0);
+fespace Qh(Th, P0);
+
+Vh [u1, u2];
+Vh [v1, v2];
+Qh p, q;
+
+// Boundary values
+func pIn = 1.0;  // Left border (label 4)
+func pOut = 0.0; // Right border (label 2)
+
+// Mixed Variational Formulation
+problem Darcy([u1, u2, p], [v1, v2, q], solver=sparsesolver) =
+      int2d(Th)( (1.0/K) * (u1*v1 + u2*v2) )
+    - int2d(Th)( p * (dx(v1) + dy(v2)) )
+    - int2d(Th)( q * (dx(u1) + dy(u2)) )
+    + int1d(Th, 4)( pIn * (v1*N.x + v2*N.y) )
+    + int1d(Th, 2)( pOut * (v1*N.x + v2*N.y) )
+    + on(1, 3, u2=0); // CORREGIDO: Se deben declarar ambas componentes para RT0
+
+// Solve problem
+Darcy;
+
+// Post-processing for visualization
+// RT0 fields are projected to P1dc (discontinuous P1) for smooth VTK export
+fespace VhOut(Th, P1dc);
+VhOut ux = u1;
+VhOut uy = u2;
+VhOut pOutViz = p;
+VhOut KOut = K;
+
+// Export to ParaView
+int[int] Order = [1, 1, 1, 1]; // Asegúrate de tener un '1' por cada campo exportado
+savevtk("DarcyVelocity.vtu", Th, [ux, uy], pOutViz, KOut, dataname="Velocity Pressure Permeability", order=Order);
+
+// EXPORT EXACT SOLUTION
+savemesh(Th, "DarcyMesh.msh");            // Save the exact mesh
+ofstream fileVel("DarcyVelocity.dat");    // Create data file
+fileVel << u1[];                          // Save the raw array of DOFs
+
+cout << "Mesh and exact RT0 velocity exported." << endl;
