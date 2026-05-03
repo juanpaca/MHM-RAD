@@ -1,5 +1,5 @@
-// MHM-UN implementation for a reaction-advection-diffusion problem with kernel W0 
-// GENERALIZED VERSION: Supports Mixed BCs (Dirichlet Top/Bottom, Neumann Homogeneous Left/Right)
+// MHM-UN implementation for a solute transport problem in porous media, with the same velocity field as the Darcy approximation
+// GENERALIZED VERSION: Supports Mixed BCs 
 
 include "getARGV.idp"
 include "ExtractDofsonBorder.idp"
@@ -60,10 +60,12 @@ string directory = (localStabinK ? "MHMUN" : "MHMGal") + "-EdgePartition-cM"+coa
 exec("mkdir -p " + directory);
 
 // Global Mesh
-real x0 = 0.0, x1 = 1.0;
+real x0 = 0.0, x1 = 3.0;
 real y0 = 0.0, y1 = 1.0;
 int globalH = 2^coarseMesh;
-mesh calP = square(globalH, globalH);
+mesh calP = square(globalH, globalH, 
+                  [x0 + (x1 - x0)*x, 
+                   y0 + (y1 - y0)*y]);
 
 int NbTriangles = calP.nt;
 int NbVertices = calP.nv;
@@ -192,7 +194,7 @@ for (int i = 0; i < NbTriangles; ++i) {
 mesh ThDarcy = readmesh("DarcyMesh.msh");
 
 // Define the EXACT same finite element space
-fespace Vh(ThDarcy, RT0);
+fespace Vh(ThDarcy, RT1);
 Vh [u1, u2]; // Velocity vector
 
 cout << "u1 dimension= " << u1[].n << ", u2 dimension= " << u2[].n << endl;
@@ -209,10 +211,10 @@ if(fileVel.good()) {
 }
 
 // Transport Parameters
-real dm = 1e-4; // Molecular diffusion
-real dl = 1e-2; // Longitudinal dispersion
-real dt = 1e-3; // Transverse dispersion
-real phi = 0.2; // Porosity
+real dm = 1e-5; 
+real dl = 1e-5; 
+real dt = 1e-5; 
+real phi = 0.2; 
 real sigmaVal = 1.0; // Reaction 
 
 // Macros for Velocity Magnitude and Dispersion Tensor D
