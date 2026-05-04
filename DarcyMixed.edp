@@ -2,7 +2,7 @@ load "Element_Mixte"
 load "iovtk"
 
 // Definición de la Malla (El solucionador de elementos finitos)
-int nElements = 120;
+int nElements = 100;
 real x0 = 0.0, x1 = 3.0;
 real y0 = 0.0, y1 = 1.0;
 mesh Th = square(3*nElements, nElements, [x0 + (x1 - x0)*x, y0 + (y1 - y0)*y]);
@@ -42,8 +42,8 @@ func real K() {
 // ========================================================================
 
 // Espacios de Elementos Finitos (RT0 para velocidad, P0 para presión)
-fespace Vh(Th, RT0);
-fespace Qh(Th, P0);
+fespace Vh(Th, RT1);
+fespace Qh(Th, P1);
 
 Vh [u1, u2];
 Vh [v1, v2];
@@ -67,7 +67,7 @@ Darcy;
 
 // Post-procesamiento para visualización
 // Proyectamos todo a un espacio discontinuo para ver claramente los "cuadritos" en ParaView
-fespace VhOut(Th, P1dc); 
+fespace VhOut(Th, P2dc); 
 VhOut ux = u1;
 VhOut uy = u2;
 VhOut pOutViz = p;

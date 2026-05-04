@@ -63,7 +63,7 @@ exec("mkdir -p " + directory);
 real x0 = 0.0, x1 = 3.0;
 real y0 = 0.0, y1 = 1.0;
 int globalH = 2^coarseMesh;
-mesh calP = square(globalH, globalH, 
+mesh calP = square(3*globalH, globalH, 
                   [x0 + (x1 - x0)*x, 
                    y0 + (y1 - y0)*y]);
 
@@ -194,7 +194,7 @@ for (int i = 0; i < NbTriangles; ++i) {
 mesh ThDarcy = readmesh("DarcyMesh.msh");
 
 // Define the EXACT same finite element space
-fespace Vh(ThDarcy, RT1);
+fespace Vh(ThDarcy, RT0);
 Vh [u1, u2]; // Velocity vector
 
 cout << "u1 dimension= " << u1[].n << ", u2 dimension= " << u2[].n << endl;
@@ -212,8 +212,8 @@ if(fileVel.good()) {
 
 // Transport Parameters
 real dm = 1e-5; 
-real dl = 1e-5; 
-real dt = 1e-5; 
+real dl = 1e-4; 
+real dt = 1e-4; 
 real phi = 0.2; 
 real sigmaVal = 1.0; // Reaction 
 
