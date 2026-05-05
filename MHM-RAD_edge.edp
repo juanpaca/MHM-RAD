@@ -1,4 +1,5 @@
-// MHM implementation for a reaction-diffusion problem with homogeneous Dirichlet conditions (strong) and edge partition (with submesh refinement)
+// MHM-UN implementation for a solute transport problem in porous media, with the same velocity field as the Darcy approximation
+// GENERALIZED VERSION: Supports Mixed BCs 
 
 include "getARGV.idp"
 include "ExtractDofsonBorder.idp"
@@ -34,33 +35,37 @@ func int duplicateElement (int[int] arr, int num){
 // Macros
 macro div(u,v) (dx(u) + dy(v)) // Divergence
 macro grad(u) [dx(u), dy(u)]   // Gradient
+macro laplacian(u) (dxx(u) + dyy(u)) // Laplacian operator
+macro alpha(a1,a2) [a1, a2]    // Advection vector
 
 // Command line arguments
-int coarseMesh = getARGV("-cM", 3);
+int coarseMesh = getARGV("-cM", 0);
 int subMesh = getARGV("-subM", 0); 
 int edgeMesh = getARGV("-edgeM", 0);
-int EkOrder = getARGV("-EkO", 1);
-int PkOrder = getARGV("-PkO", 3);
+int EkOrder = getARGV("-EkO", 2);
+int PkOrder = getARGV("-PkO", 2);
+bool verboseinK = getARGV("-verboseinK", 1);
 bool exportVTKlocal = getARGV("-vtkLocal", 0);
-bool localStabinK = getARGV("-localStabK", 0); // 0 by default, this code doesnt have stabilized local solvers
+bool localStabinK = getARGV("-localStab", 1); 
 
 // Polynomial spaces
-func Pm = P1dc; // Polynomial order edge
-func Pk = P3; // Polynomial order volume
+func Pm = P2dc; // Polynomial order edge
+func Pk = P2; // Polynomial order volume
 
 real tol = 1e-12;
+real tolW0 = 1e-10; // Tolerance for singularity criterion
 
 // Folders
 string directory = (localStabinK ? "MHMUN" : "MHMGal") + "-EdgePartition-cM"+coarseMesh+"-edgeM"+edgeMesh+"-subM"+subMesh+"-L"+EkOrder+"K"+PkOrder;
-exec("mkdir " + directory);
-string fileparaviewPrimal = directory+"/paraview-uHh-cM"+coarseMesh+"-edgeM"+edgeMesh+"-L"+EkOrder+"K"+PkOrder;
-exec("mkdir " + fileparaviewPrimal);
+exec("mkdir -p " + directory);
 
 // Global Mesh
-real x0 = 0.0, x1 = 1.0;
+real x0 = 0.0, x1 = 3.0;
 real y0 = 0.0, y1 = 1.0;
 int globalH = 2^coarseMesh;
-mesh calP = square(globalH, globalH);
+mesh calP = square(3*globalH, globalH, 
+                  [x0 + (x1 - x0)*x, 
+                   y0 + (y1 - y0)*y]);
 
 int NbTriangles = calP.nt;
 int NbVertices = calP.nv;
@@ -142,7 +147,7 @@ for(int K=0; K<NbTriangles; K++){
 locationMatrix.resize(NbTriangles, NbPartinEdge);
 
 int[int] nbTimesdofappear(ndofEh);
-nbTimesdofappear = 0; // Initialize to zero
+nbTimesdofappear = 0; 
 for (int j = 0; j < NbTriangles; j++) {
     for (int l = 0; l < NbPartinEdge; l++) {
         nbTimesdofappear(locationMatrix(j, l))++;
@@ -156,49 +161,214 @@ for (int i = 0; i < ndofEh; i++) {
 }
 intEdge.resize(countIntEdges);
 
-// Location Matrix Boundary
+int[int] mapToInternal(ndofEh);
+mapToInternal = -1;
+for(int i = 0; i < countIntEdges; i++){
+    mapToInternal(intEdge(i)) = i;
+}
+
+// =========================================================================
+//  Location Matrix Boundary
+// -1: Left (Neumann), -3: Right (Neumann)
+// -2: Bottom (Dirichlet), -4: Top (Dirichlet)
+// =========================================================================
 int[int, int] locationMatrixBndy(NbTriangles, NbPartinEdge);
 for (int i = 0; i < NbTriangles; ++i) {
     for (int j = 0; j < NbPartinEdge; ++j) {
         int ii = locationMatrix(i, j);
         real xC = coordDofsLocalGlobal(ii, 0);
         real yC = coordDofsLocalGlobal(ii, 1);
-        if (xC == x0) locationMatrixBndy(i, j) = -1;
-        else if (xC == x1) locationMatrixBndy(i, j) = -3;
-        else if (yC == y0) locationMatrixBndy(i, j) = -2;
-        else if (yC == y1) locationMatrixBndy(i, j) = -4;
+        if (abs(xC - x0) <= tol) locationMatrixBndy(i, j) = -1;      
+        else if (abs(xC - x1) <= tol) locationMatrixBndy(i, j) = -3; 
+        else if (abs(yC - y0) <= tol) locationMatrixBndy(i, j) = -2; 
+        else if (abs(yC - y1) <= tol) locationMatrixBndy(i, j) = -4; 
         else locationMatrixBndy(i, j) = ii;
     }
 }
 
-// Model problem definitions ()
-real sigmaVal = 1.0, kappaVal = 1.0; 
-func real kappa(){ return kappaVal; }
-func real sigma(){ return sigmaVal; }
-func real f() { return (sigmaVal + 5*kappaVal*pi*pi)*sin(pi*x)*sin(2*pi*y); } 
-func g = 0; 
-func u = sin(pi*x)*sin(2*pi*y);
-func dxu = pi*cos(pi*x)*sin(2*pi*y);
-func dyu = 2*pi*sin(pi*x)*cos(2*pi*y);
+// ==================================================================================
+// MODEL PARAMETERS & FUNCTIONS
+// ==================================================================================
+
+//Read the EXACT same mesh of the Darcy approximation
+mesh ThDarcy = readmesh("DarcyMesh.msh");
+
+// Define the EXACT same finite element space
+fespace Vh(ThDarcy, RT1);
+Vh [u1, u2]; // Velocity vector
+
+cout << "u1 dimension= " << u1[].n << ", u2 dimension= " << u2[].n << endl;
+
+// Load the raw degrees of freedom
+ifstream fileVel("DarcyVelocity2.dat");
+if(fileVel.good()) {
+    fileVel >> u1[];
+    cout << "Exact velocity successfully loaded!" << endl;
+    cout << "Velocity range: u1 in [" << u1[].min << ", " << u1[].max << "], u2 in [" << u2[].min << ", " << u2[].max << "]" << endl;
+} else {
+    cout << "ERROR: DarcyVelocity.dat not found." << endl;
+    exit(1);
+}
+
+// Transport Parameters
+real dm = 1e-5; 
+real dl = 1e-4; 
+real dt = 1e-5; 
+real phi = 0.2; 
+real sigmaVal = 1.0; // Reaction 
+
+// Macros for Velocity Magnitude and Dispersion Tensor D
+macro modU sqrt(u1^2 + u2^2 ) //
+macro Dxx phi*(dm + (1.0/modU)*(dl*u1^2 + dt*u2^2))  //
+macro Dyy phi*(dm + (1.0/modU)*(dl*u2^2 + dt*u1^2))  //
+macro Dxy phi*(1.0/modU)*(dl - dt)*u1*u2  //
+
+// given that we pre-compute the problem div(-kappa nabla p) = 0 and RTk is used
+func divalpha = 0.0;
+func real nu(){ return 0.5*divalpha + sigmaVal; }
+
+//source term for both cases
+func real f() {return 0.0;}
+
+// User defined boundary functions (Dirichlet)
+func gLeft = 1.0; 
+func gRight = 0.0; 
+func gBC = (abs(x - x0) <= tol) ? gLeft : ((abs(x - x1) <= tol) ? gRight : 0.0);
 
 int forder = 25;
 
-// Pre-allocate maximum space to avoid resizing inside the K loop
+// =========================================================================
+// CPU OPTIMIZATION & W0 DETECTION: Cache for local matrices calculated in Pre-loop
+// =========================================================================
+matrix[int] AkArray(NbTriangles);
+real[int,int] tauInK(NbTriangles, Th[0].nt); 
+tauInK = 0.0; 
+int[int] isAkComputed(NbTriangles);
+isAkComputed = 0;
+
+int numW0Elements = 0;
+int[int] mapW0(NbTriangles);
+mapW0 = -1;
+
+for(int K=0; K<NbTriangles; K++) {
+    int numDirichletPre = 0;
+    for (int j = 0; j < NbPartinEdge; ++j) {
+        int ii = locationMatrixBndy(K, j);
+        if (ii == -1 || ii == -3) numDirichletPre++;
+    }
+
+    //Precomputing tau in each element
+    mesh auxTh = Th[K];
+    fespace PhK(auxTh, P0);
+    PhK tauStab ;
+    tauStab = 0.0; 
+    
+    if(localStabinK){
+
+            real mk;
+            if (PkOrder == 1) { mk = 1.0/3.0; } 
+            else if (PkOrder == 2) { mk = 1.0/(48.0); } 
+            else if (PkOrder == 3){ mk = 1.0/(149.1); }
+            
+            PhK kappaMin, pNormKappa, tauStab, pecletNumber;
+            PhK hK = sqrt(2*area); 
+
+                for(int t = 0; t < Th[K].nt ; t++){
+                    mesh tTrianglebase = trunc(Th[K], nuTriangle == t); 
+                    mesh tTriangle = trunc(tTrianglebase, 1, split=2^2);
+                    fespace VhKt(tTriangle, Pk);
+
+                    VhKt Dxyt = Dxy; 
+                    VhKt Dxxt = Dxx;
+                    VhKt Dyyt = Dyy;
+
+                    //VhKt Dmaxt = 0.5*(DxxK + DyyK) + 0.5*sqrt((DxxK - DyyK)^2 + 4.0*DxyK^2) ; //maximum eigenavlue of D
+                    VhKt Dmint = 0.5*(Dxxt + Dyyt) - 0.5*sqrt((Dxxt - Dyyt)^2 + 4.0*Dxyt^2);  //minimum eigenvalue of D
+
+                    kappaMin[][t] = Dmint[].min;
+                    VhKt normDt = sqrt(Dxxt^2 + 2.0*Dxyt^2 + Dyyt^2);
+                    VhKt normGradDt = sqrt(dx(Dxxt)^2 + 2.0*dx(Dxyt)^2 + dx(Dyyt)^2 + dy(Dxxt)^2 + 2.0*dy(Dxyt)^2 + dy(Dyyt)^2);
+
+                    real p = 50.0;
+                    real ht = tTriangle.hmax;
+                    pNormKappa[][t] =( (int2d(tTriangle )(normDt^p) )^(1.0/p) 
+                                + ht *(int2d(tTriangle )(normGradDt^p) )^(1.0/p) )^(2.0 / p) ;
+                }
+            
+            PhK pecletNumber1=0, pecletNumber2=0, maxPeclet1=0, maxPeclet2=0;
+            pecletNumber2 = (mk*sqrt(u1^2 + u2^2)*hK)/(kappaMin);
+            maxPeclet2 = max(pecletNumber2 , 1);
+
+            if(sigmaVal != 0.0){
+                pecletNumber1 = (2.0*kappaMin) / (mk * hK^2 * sigmaVal) ;
+                maxPeclet1 = max(pecletNumber1 ,1);
+                tauStab = mk * hK^2 / (sigmaVal*mk* hK^2 *maxPeclet1 + 2* (pNormKappa / kappaMin )*maxPeclet2);
+            }else{
+                
+                tauStab = kappaMin * mk * hK^2 / ( 2*pNormKappa * maxPeclet2 + 1e-10);
+
+            }
+                
+            tauInK(K, :) = tauStab[]; 
+        }
+    
+    // Evaluate criterion only for elements with no strong Dirichlet boundary
+    if (numDirichletPre == 0) {
+        
+        fespace VhK(auxTh, Pk);
+
+        VhK DxxK = Dxx, DyyK = Dyy, DxyK = Dxy;
+
+        //macro for div(D grad(w)) for any w in VhK
+        macro divDgrad(w) (
+          DxxK*dxx(w) + 2.0*DxyK*dxy(w) + DyyK*dyy(w) 
+        + (dx(DxxK) + dy(DxyK))*dx(w) 
+        + (dx(DxyK) + dy(DyyK))*dy(w)
+        ) //
+        
+        VhK etaK, varphi;
+ 
+        varf ahK(etaK, varphi) = int2d(auxTh )(
+                                Dxx*dx(etaK)*dx(varphi) + Dxy*dy(etaK)*dx(varphi) + Dxy*dx(etaK)*dy(varphi) + Dyy*dy(etaK)*dy(varphi)
+                                + 0.5*(alpha(u1,u2)'*grad(etaK))*varphi
+                                - 0.5*etaK*(alpha(u1,u2)'*grad(varphi))
+                                + nu()*(etaK*varphi))
+                                + int2d(auxTh )(
+                                    - tauStab * (sigmaVal*etaK  + alpha(u1,u2)'*grad(etaK) - divDgrad(etaK))
+                                          * (sigmaVal*varphi  - alpha(u1,u2)'*grad(varphi)  - divDgrad(varphi))
+                                );
+        
+        AkArray[K] = ahK(VhK, VhK); 
+        isAkComputed[K] = 1;        
+        
+        real[int] ones(VhK.ndof); 
+        ones = 1.0;
+        real[int] AkOnes = AkArray[K] * ones;
+        real normAk = AkOnes.l2; 
+        
+        if (normAk <= tolW0) {
+            mapW0[K] = numW0Elements++;
+        }
+    }
+}
+
+int totalGlobalUnknowns = countIntEdges + numW0Elements;
+
 fespace VhK0(Th[0], Pk);
 int ndofVhK0 = VhK0.ndof;
 real[int,int] Thf(NbTriangles, ndofVhK0);
 real[int,int] ThlambdaH(NbTriangles * NbPartinEdge, ndofVhK0);
+real[int,int] Theta0(NbTriangles, ndofVhK0); 
 
-//triplet arrays for fast global matrix assembly
-int maxNonZeros = NbTriangles * NbPartinEdge * NbPartinEdge;
+int maxNonZeros = NbTriangles * NbPartinEdge * NbPartinEdge + 2 * NbTriangles * NbPartinEdge;
 int[int] Iglobal(maxNonZeros), Jglobal(maxNonZeros);
 real[int] Cglobal(maxNonZeros);
 int idxA = 0;
 
-real[int] eF(ndofEh); 
-eF = 0.0;
+real[int] eFg(totalGlobalUnknowns); 
+eFg = 0.0;
 
-//solving local problems
+// Solving local problems
 for(int K = 0; K < NbTriangles; K++){
     mesh auxTh = Th[K];
     meshL auxEh = EdgeH[K];
@@ -206,60 +376,136 @@ for(int K = 0; K < NbTriangles; K++){
     fespace VhK(auxTh, Pk);
     int ndofVhK = VhK.ndof;
     VhK[int] etalK(NbPartinEdge);
-    VhK etafK, etaK, varphi; 
+    VhK etafK, etaK, varphi, eta0K; 
+
+    VhK DxxK = Dxx, DyyK = Dyy, DxyK = Dxy;
+    VhK u1K = u1, u2K = u2;
+
+        //macro for div(D grad(w)) for any w in VhK
+        macro divDgrad(w) (
+          DxxK*dxx(w) + 2.0*DxyK*dxy(w) + DyyK*dyy(w) 
+        + (dx(DxxK) + dy(DxyK))*dx(w) 
+        + (dx(DxyK) + dy(DyyK))*dy(w)
+        ) //
+
+    fespace PhK(auxTh, P0);
+    PhK tauStab = 0.0 ;
+    tauStab[] = tauInK(K, :); 
+
+    if(verboseinK) cout << "Element " << K << ": tauStab = " << tauStab[].max << endl;
 
     fespace Bndy(auxEh, Pm);
     Bndy bndyx = x, bndyy = y;
 
+    int numDirichlet = 0;
     int[int] dofGlobalBndy(Bndy.ndof);
+    
     for(int i=0; i<Bndy.ndof; i++){
         real bx = bndyx[][i], by = bndyy[][i];
-        if(bx == x0) dofGlobalBndy(i) = -1;
-        else if(bx == x1) dofGlobalBndy(i) = -3;
-        else if(by == y0) dofGlobalBndy(i) = -2;
-        else if(by == y1) dofGlobalBndy(i) = -4;
+        if(abs(bx - x0) <= tol) { dofGlobalBndy(i) = -1; numDirichlet++; }
+        else if(abs(bx - x1) <= tol) { dofGlobalBndy(i) = -3; numDirichlet++;  }
+        else if(abs(by - y0) <= tol) { dofGlobalBndy(i) = -2;  }
+        else if(abs(by - y1) <= tol) { dofGlobalBndy(i) = -4; }
         else dofGlobalBndy(i) = i;
     }
 
-    int posNumbers = CountPositive(dofGlobalBndy, Bndy.ndof);
-    int negNumbers = Bndy.ndof - posNumbers;
-    
     Bndy labeldofK1 = region;
     real[int] edgeLabellocal = labeldofK1[];
 
-    int[int] labelGlobalBndy(max(negNumbers, 1)); // Safe allocation
-    int jNeg=0;
+    int[int] labelDirichlet(max(numDirichlet, 1)); 
+    int jDir=0;
     for(int i=0; i<Bndy.ndof; i++){
-        if(dofGlobalBndy(i) < 0) labelGlobalBndy(jNeg++) = edgeLabellocal(i);
+        if(dofGlobalBndy(i) == -1 || dofGlobalBndy(i) == -3) {
+            labelDirichlet(jDir++) = edgeLabellocal(i);
+        }
     }
     
-    //array slicing natively 
-    labelGlobalBndy.sort;
-    int sizelabelGlobalBndy = duplicateElement(labelGlobalBndy, jNeg);
-    int[int] labelGlobalBndyNoDup = labelGlobalBndy(0:sizelabelGlobalBndy-1); 
+    labelDirichlet.sort;
+    int sizeLabelDirichlet = duplicateElement(labelDirichlet, jDir);
+    int[int] labelDirichletNoDup = labelDirichlet(0:sizeLabelDirichlet-1); 
 
-    matrix Ak;
-    if(negNumbers == 0){
-        varf ahK(etaK, varphi) = int2d(auxTh)(kappa()*grad(etaK)'*grad(varphi) + sigma()*(etaK*varphi));
-        Ak = ahK(VhK,VhK);
+    matrix AAk;
+    if(numDirichlet == 0){
+        matrix Ak;
+        if(isAkComputed[K] == 1){
+            Ak = AkArray[K];
+        } else {
+            varf ahK(etaK, varphi) = int2d(auxTh )(
+                                    Dxx*dx(etaK)*dx(varphi) + Dxy*dy(etaK)*dx(varphi) + Dxy*dx(etaK)*dy(varphi) + Dyy*dy(etaK)*dy(varphi)
+                                    + 0.5*(alpha(u1,u2)'*grad(etaK))*varphi
+                                    - 0.5*etaK*(alpha(u1,u2)'*grad(varphi))
+                                    + nu()*(etaK*varphi) )
+                                    + int2d(auxTh  )(
+                                    - tauStab * (sigmaVal*etaK  + alpha(u1,u2)'*grad(etaK) - divDgrad(etaK)) 
+                                          * (sigmaVal*varphi  - alpha(u1,u2)'*grad(varphi) - divDgrad(varphi))
+                                    );
+            Ak = ahK(VhK,VhK);
+        }
+        
+        if (mapW0[K] != -1) {
+            varf bInt(unused, varphi) = int2d(auxTh)(1.0 * varphi);
+            real[int] Bvec = bInt(0, VhK);
+            
+            int[int] I1(ndofVhK), J1(ndofVhK);
+            real[int] C1(ndofVhK);
+            for(int i=0; i<ndofVhK; i++) { I1[i] = i; J1[i] = 0; C1[i] = Bvec[i]; }
+            matrix Bc = [I1, J1, C1];
+            matrix Bct = [J1, I1, C1];
+            
+            int[int] Iz(1), Jz(1); real[int] Cz(1); Iz[0]=0; Jz[0]=0; Cz[0]=0.0;
+            matrix Z = [Iz, Jz, Cz];
+            
+            AAk = [[Ak, Bc], [Bct, Z]];
+            
+            real AreaK = int2d(auxTh)(1.0);
+            real[int] rhs0(ndofVhK + 1); rhs0 = 0.0; rhs0[ndofVhK] = AreaK;
+            
+            set(AAk, solver=sparsesolver);
+            real[int] soleta0 = AAk^-1 * rhs0;
+            for(int i=0; i<ndofVhK; i++) eta0K[][i] = soleta0[i];
+            Theta0(K, :) = eta0K[];
+        } else {
+            AAk = [[Ak]];
+            set(AAk, solver=sparsesolver);
+        }
     } else {
-        varf ahK(etaK, varphi) = int2d(auxTh)(kappa()*grad(etaK)'*grad(varphi) + sigma()*(etaK*varphi)) + on(labelGlobalBndyNoDup, etaK=g);
-        Ak = ahK(VhK,VhK);
+        varf ahK(etaK, varphi) = int2d(auxTh )(
+                                Dxx*dx(etaK)*dx(varphi) + Dxy*dy(etaK)*dx(varphi) + Dxy*dx(etaK)*dy(varphi) + Dyy*dy(etaK)*dy(varphi)
+                                + 0.5*(alpha(u1,u2)'*grad(etaK))*varphi
+                                - 0.5*etaK*(alpha(u1,u2)'*grad(varphi))
+                                + nu()*(etaK*varphi) )
+                                + int2d(auxTh )(
+                                    - tauStab * (sigmaVal*etaK  + alpha(u1,u2)'*grad(etaK) - divDgrad(etaK)) 
+                                          * (sigmaVal*varphi  - alpha(u1,u2)'*grad(varphi) - divDgrad(varphi))
+                                )
+                                + on(labelDirichletNoDup, etaK=gBC);    
+        matrix Ak = ahK(VhK,VhK);
+        AAk = [[Ak]];
+        set(AAk, solver=sparsesolver);
     }
-
-    matrix AAk = [[Ak]];
-    set(AAk, solver=sparsesolver); // Initialize solver once per element
     
     real[int] Fkf(ndofVhK);
-    if(negNumbers == 0){
-        varf fhKf(unused, varphi) = int2d(auxTh, qforder=forder)(f()*varphi);
+    if(numDirichlet == 0){
+        varf fhKf(unused, varphi) = int2d(auxTh )(f()*varphi) + int2d(auxTh )(
+                                    - tauStab * f() * (sigmaVal*varphi  - alpha(u1,u2)'*grad(varphi) - divDgrad(varphi))
+                                );
         Fkf = fhKf(0, VhK);
     } else {
-        varf fhKf(unused, varphi) = int2d(auxTh, qforder=forder)(f()*varphi) + on(labelGlobalBndyNoDup, unused=g);
+        varf fhKf(unused, varphi) = int2d(auxTh )(f()*varphi) + int2d(auxTh )(
+                                    - tauStab* f() * (sigmaVal*varphi  - alpha(u1,u2)'*grad(varphi) - divDgrad(varphi) )
+                                    ) + on(labelDirichletNoDup, unused=gBC);
         Fkf = fhKf(0, VhK);   
     }
 
-    etafK[] = AAk^-1 * Fkf;
+    if (mapW0[K] != -1) {
+        real[int] FkfAug(ndofVhK + 1);
+        for(int i=0; i<ndofVhK; i++) FkfAug[i] = Fkf[i];
+        FkfAug[ndofVhK] = 0.0;
+        real[int] soletaf = AAk^-1 * FkfAug;
+        for(int i=0; i<ndofVhK; i++) etafK[][i] = soletaf[i];
+    } else {
+        etafK[] = AAk^-1 * Fkf;
+    }
     Thf(K,:) = etafK[];
 
     real[int, int] Fkl(ndofVhK, NbPartinEdge);
@@ -280,7 +526,15 @@ for(int K = 0; K < NbTriangles; K++){
 
     for(int i=0; i<NbPartinEdge; i++){
         real[int] rhsCol = Fkl(:,i);
-        etalK[i][] = AAk^-1 * rhsCol;
+        if (mapW0[K] != -1) {
+            real[int] rhsAug(ndofVhK + 1);
+            for(int d=0; d<ndofVhK; d++) rhsAug[d] = rhsCol[d];
+            rhsAug[ndofVhK] = 0.0;
+            real[int] solAug = AAk^-1 * rhsAug;
+            for(int d=0; d<ndofVhK; d++) etalK[i][][d] = solAug[d];
+        } else {
+            etalK[i][] = AAk^-1 * rhsCol;
+        }
         ThlambdaH((K*NbPartinEdge)+i, :) = etalK[i][];
     }
 
@@ -294,43 +548,61 @@ for(int K = 0; K < NbTriangles; K++){
         for(int j = 0; j < ndofVhK; j++)
             MetalK(i,j) = etalK[i][][j];
 
-    AhK = MetalK * Mfketal;
+    AhK = Mfketal' * MetalK'; 
     efK = Mfketal' * MetafK;
 
-    //collect triplets instead of inserting directly into sparse matrix
     for(int n=0; n<AhK.n; n++){
-        for(int m=0; m<AhK.m; m++){
-            Iglobal[idxA] = locationMatrix(K,n);
-            Jglobal[idxA] = locationMatrix(K,m);
-            Cglobal[idxA] = AhK(n,m);
-            idxA++;
+        int globalI = locationMatrix(K,n);
+        int internalI = mapToInternal(globalI);
+        
+        if (internalI >= 0){
+            eFg[internalI] -= efK(n); 
+            
+            for(int m=0; m<AhK.m; m++){
+                int globalJ = locationMatrix(K,m);
+                int internalJ = mapToInternal(globalJ);
+                
+                if (internalJ >= 0){
+                    Iglobal[idxA] = internalI;
+                    Jglobal[idxA] = internalJ;
+                    Cglobal[idxA] = AhK(n,m);
+                    idxA++;
+                }
+            }
         }
     }
 
-    for(int m=0; m<efK.n; m++) eF(locationMatrix(K,m)) -= efK(m);
-}
+    if (mapW0[K] != -1) {
+        int uGlobalIdx = countIntEdges + mapW0[K]; 
+        
+        matrix MphiK(1, ndofVhK);
+        for(int j=0; j<ndofVhK; j++) MphiK(0, j) = eta0K[][j];
+        
+        matrix BhK = Mfketal' * MphiK'; 
 
-//Build the sparse matrix efficiently in one step!
-matrix AglobalSparse = [Iglobal(0:idxA-1), Jglobal(0:idxA-1), Cglobal(0:idxA-1)];
+        real f0Kval = int2d(auxTh )(f() - tauStab * f() * (sigmaVal - divalpha) );
+        eFg[uGlobalIdx] = -f0Kval; 
 
-//global problem solving
-int contElemInt = 0, contElemBndy = 0;
-int[int] elemInt(NbTriangles), elemTouchBndy(NbTriangles);
-for(int i=0; i<NbTriangles; i++){
-    int posNum = CountPositive(locationMatrixBndy(i,:), NbPartinEdge);
-    if((NbPartinEdge - posNum) == 0) elemInt(contElemInt++) = i;
-    else elemTouchBndy(contElemBndy++) = i;
-}
+        for(int n=0; n<NbPartinEdge; n++){
+            int globalI = locationMatrix(K,n);
+            int internalI = mapToInternal(globalI);
 
-matrix Ag(countIntEdges, countIntEdges);
-real[int] eFg(countIntEdges); 
+            if (internalI >= 0){
+                Iglobal[idxA] = internalI;
+                Jglobal[idxA] = uGlobalIdx;
+                Cglobal[idxA] = BhK(n, 0);
+                idxA++;
 
-for(int i=0; i<countIntEdges; i++){
-    for(int j=0; j<countIntEdges; j++){
-        Ag(i,j) = AglobalSparse(intEdge(i), intEdge(j)); 
+                Iglobal[idxA] = uGlobalIdx;
+                Jglobal[idxA] = internalI;
+                Cglobal[idxA] = BhK(n, 0); 
+                idxA++;
+            }
+        }
     }
-    eFg(i) = eF(intEdge(i));
 }
+
+matrix Ag = [Iglobal(0:idxA-1), Jglobal(0:idxA-1), Cglobal(0:idxA-1)];
 
 matrix LHSg = [[Ag]];
 set(LHSg, solver=sparsesolver);
@@ -340,9 +612,20 @@ EdgeSpace lambdaH;
 lambdaH[] = 0;
 for(int i=0; i<countIntEdges; i++) lambdaH[][intEdge(i)] = solGlobalg(i);
 
-// Final approx solution gathering
-real globalSumL2 = 0, globalSumH1 = 0, globalSumH1semi = 0;
-real[int, int] uHhg(NbTriangles, ndofEh);
+real[int] uH0Array(NbTriangles);
+uH0Array = 0.0;
+for(int K=0; K<NbTriangles; K++) {
+    if (mapW0[K] != -1) uH0Array[K] = solGlobalg(countIntEdges + mapW0[K]);
+}
+
+ofstream outPvdCon(directory + "/concentrationHh.pvd");
+
+if(exportVTKlocal > 0){
+    outPvdCon << "<VTKFile type=\"Collection\" version=\"0.1\">\n";
+    outPvdCon << "  <Collection>\n";
+}
+
+real[int, int] uHhg(NbTriangles, ndofVhK0);
 
 for(int K = 0; K < NbTriangles; K++){
     fespace VhKaux(Th[K], Pk);
@@ -353,36 +636,53 @@ for(int K = 0; K < NbTriangles; K++){
     
     for(int i = 0; i < NbPartinEdge; i++){
         int ii = locationMatrix(K,i);
-        real[int] currentEta = ThlambdaH((K*NbPartinEdge)+i, :);
-        sumThlambdaHK += lambdaH[][ii] * currentEta; 
+        if (ii >= 0 && ii < lambdaH[].n) {
+            int basisIndex = (K * NbPartinEdge) + i;
+            real[int] currentEta(ndofVhKaux);
+            for(int j = 0; j < ndofVhKaux; j++) currentEta[j] = ThlambdaH(basisIndex, j);
+            
+            sumThlambdaHK += lambdaH[][ii] * currentEta; 
+        }
     }
 
-    real[int] ThhatfK = Thf(K,:);
+    real[int] ThhatfK(ndofVhKaux);
+    for(int j = 0; j < ndofVhKaux; j++) ThhatfK[j] = Thf(K, j);
+    
     real[int] uHhK = sumThlambdaHK + ThhatfK; 
+    
+    if (mapW0[K] != -1) {
+        real[int] currentEta0(ndofVhKaux);
+        for(int j = 0; j < ndofVhKaux; j++) currentEta0[j] = Theta0(K, j);
+        
+        real[int] aux0 = uH0Array[K] * currentEta0;
+        uHhK += aux0;
+    }
 
     VhKaux auxuHhK;
     auxuHhK[] = uHhK;
 
-    uHhg(K,:) = auxuHhK[];
-    uHhg.resize(NbTriangles, ndofVhKaux);
-    
-    real L2errK = int2d(Th[K])((u - auxuHhK)^2);
-    real H1semierrK = int2d(Th[K])((dx(auxuHhK)- dxu)^2 +(dy(auxuHhK) - dyu)^2);
-    
-    globalSumL2 += L2errK;
-    globalSumH1semi += H1semierrK;
-    globalSumH1 += L2errK + H1semierrK;
+    for(int j = 0; j < ndofVhKaux; j++){
+        uHhg(K, j) = auxuHhK[][j];
+    }
 
     if(exportVTKlocal){
-        mesh ThKViz = trunc(Th[K], 1, split = 1);
+        mesh ThKViz = trunc(Th[K], 1, split = 4);
         fespace VhViz(ThKViz, P1);
         VhViz uhHKViz = auxuHhK;
         int[int] Order = [1];
-        savevtk(fileparaviewPrimal+"/uh-"+K+"-cM"+coarseMesh+"-eM"+edgeMesh+".vtu", ThKViz, uhHKViz, dataname="$u_{Hh}^{}$", order=Order);
+        if(localStabinK){
+                    savevtk(directory + "/uh-K" + K + ".vtu", ThKViz, uhHKViz, dataname="$u_{Hh}^{}$-(MHM-UN)", order=Order);
+        }
+        else savevtk(directory + "/uh-K" + K + ".vtu", ThKViz, uhHKViz, dataname="$u_{Hh}^{}$-(MHM-Gal)", order=Order);
+
+        outPvdCon << "    <DataSet file=\"uh-K" << K << ".vtu\"/>\n";
     }
 }
 
+if(exportVTKlocal){
+    outPvdCon << "  </Collection>\n</VTKFile>\n"; // Fixed typo (outPvdVel to outPvdCon)
+}
+
 cout << "uHh = min " << uHhg.min << " max=" << uHhg.max << endl;
-cout << "calP #triangles= " << calP.nt << " | ThK #triangles= " << Th[0].nt << endl;
-cout << "Erros uHh (calH   H   h    ndofLambda    L2error    H1error)" << endl;
-cout << calP.hmax << " "<<  Ehg.hmax << " " << Th[0].hmax << " " << ndofEh << " " << sqrt(globalSumL2) << " " << sqrt(globalSumH1) << endl;
+cout << "W0 Kernel detected dynamically in " << numW0Elements << " elements." << endl;
+cout << "calP #triangles= " << calP.nt << " | ThK #triangles= " << Th[0].nt << "| nDof=" << ndofEh << endl;
