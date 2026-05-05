@@ -67,19 +67,23 @@ Darcy;
 
 // Post-procesamiento para visualización
 // Proyectamos todo a un espacio discontinuo para ver claramente los "cuadritos" en ParaView
+//mesh ThViz = trunc(Th, 1, split=2^3);
 fespace VhOut(Th, P2dc); 
 VhOut ux = u1;
 VhOut uy = u2;
 VhOut pOutViz = p;
-VhOut KOut = K(); // Guardamos el campo K para visualizarlo
+//VhOut KOut = K(); // Guardamos el campo K para visualizarlo
 
 // Exportar a ParaView
-int[int] Order = [1, 1, 1, 1];
-savevtk("DarcyVelocity.vtu", Th, [ux, uy], pOutViz, KOut, dataname="Velocity Pressure Permeability", order=Order);
+int[int] Order = [1, 1, 1, 0];
+savevtk("DarcyVelocity.vtu", Th, [ux, uy], pOutViz, K(), dataname="Velocity Pressure Permeability", order=Order);
 
 // EXPORTAR SOLUCIÓN EXACTA PARA MHM
 savemesh(Th, "DarcyMesh.msh");            
 ofstream fileVel("DarcyVelocity.dat");    
 fileVel << u1[];                          
 
-cout << "Malla, Velocidad RT0 y Campo K exportados a VTU y DAT." << endl;
+cout << "===================" << endl;
+cout << "Number of dofs: " << Vh.ndof << " (velocity), " << Qh.ndof << " (pressure)" << endl;
+cout << "Number of elements: " << Th.nt << endl;
+cout << "===================" << endl;  

@@ -42,15 +42,15 @@ macro alpha(a1,a2) [a1, a2]    // Advection vector
 int coarseMesh = getARGV("-cM", 0);
 int subMesh = getARGV("-subM", 0); 
 int edgeMesh = getARGV("-edgeM", 0);
-int EkOrder = getARGV("-EkO", 1);
-int PkOrder = getARGV("-PkO", 3);
+int EkOrder = getARGV("-EkO", 2);
+int PkOrder = getARGV("-PkO", 2);
 bool verboseinK = getARGV("-verboseinK", 1);
 bool exportVTKlocal = getARGV("-vtkLocal", 0);
 bool localStabinK = getARGV("-localStab", 1); 
 
 // Polynomial spaces
-func Pm = P1dc; // Polynomial order edge
-func Pk = P3; // Polynomial order volume
+func Pm = P2dc; // Polynomial order edge
+func Pk = P2; // Polynomial order volume
 
 real tol = 1e-12;
 real tolW0 = 1e-10; // Tolerance for singularity criterion
@@ -194,13 +194,13 @@ for (int i = 0; i < NbTriangles; ++i) {
 mesh ThDarcy = readmesh("DarcyMesh.msh");
 
 // Define the EXACT same finite element space
-fespace Vh(ThDarcy, RT0);
+fespace Vh(ThDarcy, RT1);
 Vh [u1, u2]; // Velocity vector
 
 cout << "u1 dimension= " << u1[].n << ", u2 dimension= " << u2[].n << endl;
 
 // Load the raw degrees of freedom
-ifstream fileVel("DarcyVelocity.dat");
+ifstream fileVel("DarcyVelocity2.dat");
 if(fileVel.good()) {
     fileVel >> u1[];
     cout << "Exact velocity successfully loaded!" << endl;
@@ -213,7 +213,7 @@ if(fileVel.good()) {
 // Transport Parameters
 real dm = 1e-5; 
 real dl = 1e-4; 
-real dt = 1e-4; 
+real dt = 1e-5; 
 real phi = 0.2; 
 real sigmaVal = 1.0; // Reaction 
 
@@ -223,7 +223,7 @@ macro Dxx phi*(dm + (1.0/modU)*(dl*u1^2 + dt*u2^2))  //
 macro Dyy phi*(dm + (1.0/modU)*(dl*u2^2 + dt*u1^2))  //
 macro Dxy phi*(1.0/modU)*(dl - dt)*u1*u2  //
 
-// given that we pre-compute the problem div(-kappa nabla p) = 0 and RT0 is used
+// given that we pre-compute the problem div(-kappa nabla p) = 0 and RTk is used
 func divalpha = 0.0;
 func real nu(){ return 0.5*divalpha + sigmaVal; }
 
@@ -266,12 +266,12 @@ for(int K=0; K<NbTriangles; K++) {
     if(localStabinK){
 
             real mk;
-            real hK = sqrt(2*area); 
             if (PkOrder == 1) { mk = 1.0/3.0; } 
             else if (PkOrder == 2) { mk = 1.0/(48.0); } 
             else if (PkOrder == 3){ mk = 1.0/(149.1); }
             
             PhK kappaMin, pNormKappa, tauStab, pecletNumber;
+            PhK hK = sqrt(2*area); 
 
                 for(int t = 0; t < Th[K].nt ; t++){
                     mesh tTrianglebase = trunc(Th[K], nuTriangle == t); 
@@ -289,9 +289,10 @@ for(int K=0; K<NbTriangles; K++) {
                     VhKt normDt = sqrt(Dxxt^2 + 2.0*Dxyt^2 + Dyyt^2);
                     VhKt normGradDt = sqrt(dx(Dxxt)^2 + 2.0*dx(Dxyt)^2 + dx(Dyyt)^2 + dy(Dxxt)^2 + 2.0*dy(Dxyt)^2 + dy(Dyyt)^2);
 
-                    real p = 60.0;
+                    real p = 50.0;
+                    real ht = tTriangle.hmax;
                     pNormKappa[][t] =( (int2d(tTriangle )(normDt^p) )^(1.0/p) 
-                                + hK^2 *(int2d(tTriangle )(normGradDt^p) )^(1.0/p) )^(2.0 / p) ;
+                                + ht *(int2d(tTriangle )(normGradDt^p) )^(1.0/p) )^(2.0 / p) ;
                 }
             
             PhK pecletNumber1=0, pecletNumber2=0, maxPeclet1=0, maxPeclet2=0;
@@ -299,11 +300,13 @@ for(int K=0; K<NbTriangles; K++) {
             maxPeclet2 = max(pecletNumber2 , 1);
 
             if(sigmaVal != 0.0){
-                pecletNumber1 = (2.0*kappaMin) / (mk * 2 * area * sigmaVal) ;
+                pecletNumber1 = (2.0*kappaMin) / (mk * hK^2 * sigmaVal) ;
                 maxPeclet1 = max(pecletNumber1 ,1);
-                tauStab = mk * 2* area / (sigmaVal*mk* 2 * area *maxPeclet1 + 2* (pNormKappa / kappaMin )*maxPeclet2);
+                tauStab = mk * hK^2 / (sigmaVal*mk* hK^2 *maxPeclet1 + 2* (pNormKappa / kappaMin )*maxPeclet2);
             }else{
-                tauStab = mk * 2* area / ( 2* (pNormKappa / kappaMin ) *maxPeclet2);
+                
+                tauStab = kappaMin * mk * hK^2 / ( 2*pNormKappa * maxPeclet2 + 1e-10);
+
             }
                 
             tauInK(K, :) = tauStab[]; 
@@ -315,7 +318,6 @@ for(int K=0; K<NbTriangles; K++) {
         fespace VhK(auxTh, Pk);
 
         VhK DxxK = Dxx, DyyK = Dyy, DxyK = Dxy;
-        VhK u1K = u1, u2K = u2;
 
         //macro for div(D grad(w)) for any w in VhK
         macro divDgrad(w) (
@@ -323,22 +325,17 @@ for(int K=0; K<NbTriangles; K++) {
         + (dx(DxxK) + dy(DxyK))*dx(w) 
         + (dx(DxyK) + dy(DyyK))*dy(w)
         ) //
-
-        //macro for div(alpha * w)
-        macro divAlpha(w) (
-            (dx(u1K) + dy(u2K))*w + u1K*dx(w) + u2K*dy(w)
-        ) //
         
         VhK etaK, varphi;
  
-        varf ahK(etaK, varphi) = int2d(auxTh , qforder =forder , optimize = 0)(
+        varf ahK(etaK, varphi) = int2d(auxTh )(
                                 Dxx*dx(etaK)*dx(varphi) + Dxy*dy(etaK)*dx(varphi) + Dxy*dx(etaK)*dy(varphi) + Dyy*dy(etaK)*dy(varphi)
                                 + 0.5*(alpha(u1,u2)'*grad(etaK))*varphi
                                 - 0.5*etaK*(alpha(u1,u2)'*grad(varphi))
                                 + nu()*(etaK*varphi))
-                                + int2d(auxTh , qforder =forder , optimize = 0)(
-                                    - tauStab * (sigmaVal*etaK  + divAlpha(etaK) - divDgrad(etaK))
-                                          * (sigmaVal*varphi  - divAlpha(varphi) - divDgrad(varphi))
+                                + int2d(auxTh )(
+                                    - tauStab * (sigmaVal*etaK  + alpha(u1,u2)'*grad(etaK) - divDgrad(etaK))
+                                          * (sigmaVal*varphi  - alpha(u1,u2)'*grad(varphi)  - divDgrad(varphi))
                                 );
         
         AkArray[K] = ahK(VhK, VhK); 
@@ -391,11 +388,6 @@ for(int K = 0; K < NbTriangles; K++){
         + (dx(DxyK) + dy(DyyK))*dy(w)
         ) //
 
-        //macro for div(alpha * w)
-        macro divAlpha(w) (
-            (dx(u1K) + dy(u2K))*w + u1K*dx(w) + u2K*dy(w)
-        ) //
-
     fespace PhK(auxTh, P0);
     PhK tauStab = 0.0 ;
     tauStab[] = tauInK(K, :); 
@@ -438,14 +430,14 @@ for(int K = 0; K < NbTriangles; K++){
         if(isAkComputed[K] == 1){
             Ak = AkArray[K];
         } else {
-            varf ahK(etaK, varphi) = int2d(auxTh , qforder =forder , optimize = 0 )(
+            varf ahK(etaK, varphi) = int2d(auxTh )(
                                     Dxx*dx(etaK)*dx(varphi) + Dxy*dy(etaK)*dx(varphi) + Dxy*dx(etaK)*dy(varphi) + Dyy*dy(etaK)*dy(varphi)
                                     + 0.5*(alpha(u1,u2)'*grad(etaK))*varphi
                                     - 0.5*etaK*(alpha(u1,u2)'*grad(varphi))
                                     + nu()*(etaK*varphi) )
-                                    + int2d(auxTh , qforder =forder , optimize = 0 )(
-                                    - tauStab * (sigmaVal*etaK  + divAlpha(etaK) - divDgrad(etaK)) 
-                                          * (sigmaVal*varphi  - divAlpha(varphi) - divDgrad(varphi))
+                                    + int2d(auxTh  )(
+                                    - tauStab * (sigmaVal*etaK  + alpha(u1,u2)'*grad(etaK) - divDgrad(etaK)) 
+                                          * (sigmaVal*varphi  - alpha(u1,u2)'*grad(varphi) - divDgrad(varphi))
                                     );
             Ak = ahK(VhK,VhK);
         }
@@ -477,14 +469,14 @@ for(int K = 0; K < NbTriangles; K++){
             set(AAk, solver=sparsesolver);
         }
     } else {
-        varf ahK(etaK, varphi) = int2d(auxTh , qforder =forder , optimize = 0)(
+        varf ahK(etaK, varphi) = int2d(auxTh )(
                                 Dxx*dx(etaK)*dx(varphi) + Dxy*dy(etaK)*dx(varphi) + Dxy*dx(etaK)*dy(varphi) + Dyy*dy(etaK)*dy(varphi)
                                 + 0.5*(alpha(u1,u2)'*grad(etaK))*varphi
                                 - 0.5*etaK*(alpha(u1,u2)'*grad(varphi))
                                 + nu()*(etaK*varphi) )
-                                + int2d(auxTh , qforder =forder , optimize = 0 )(
-                                    - tauStab * (sigmaVal*etaK  + divAlpha(etaK) - divDgrad(etaK)) 
-                                          * (sigmaVal*varphi  - divAlpha(varphi) - divDgrad(varphi))
+                                + int2d(auxTh )(
+                                    - tauStab * (sigmaVal*etaK  + alpha(u1,u2)'*grad(etaK) - divDgrad(etaK)) 
+                                          * (sigmaVal*varphi  - alpha(u1,u2)'*grad(varphi) - divDgrad(varphi))
                                 )
                                 + on(labelDirichletNoDup, etaK=gBC);    
         matrix Ak = ahK(VhK,VhK);
@@ -494,13 +486,13 @@ for(int K = 0; K < NbTriangles; K++){
     
     real[int] Fkf(ndofVhK);
     if(numDirichlet == 0){
-        varf fhKf(unused, varphi) = int2d(auxTh , qforder =forder , optimize = 0 )(f()*varphi) + int2d(auxTh , qforder =forder , optimize = 0)(
-                                    - tauStab * f() * (sigmaVal*varphi  - divAlpha(varphi) - divDgrad(varphi))
+        varf fhKf(unused, varphi) = int2d(auxTh )(f()*varphi) + int2d(auxTh )(
+                                    - tauStab * f() * (sigmaVal*varphi  - alpha(u1,u2)'*grad(varphi) - divDgrad(varphi))
                                 );
         Fkf = fhKf(0, VhK);
     } else {
-        varf fhKf(unused, varphi) = int2d(auxTh , qforder =forder , optimize = 0 )(f()*varphi) + int2d(auxTh , qforder =forder , optimize = 0 )(
-                                    - tauStab* f() * (sigmaVal*varphi  - divAlpha(varphi) - divDgrad(varphi) )
+        varf fhKf(unused, varphi) = int2d(auxTh )(f()*varphi) + int2d(auxTh )(
+                                    - tauStab* f() * (sigmaVal*varphi  - alpha(u1,u2)'*grad(varphi) - divDgrad(varphi) )
                                     ) + on(labelDirichletNoDup, unused=gBC);
         Fkf = fhKf(0, VhK);   
     }
@@ -674,7 +666,7 @@ for(int K = 0; K < NbTriangles; K++){
     }
 
     if(exportVTKlocal){
-        mesh ThKViz = trunc(Th[K], 1, split = 1);
+        mesh ThKViz = trunc(Th[K], 1, split = 4);
         fespace VhViz(ThKViz, P1);
         VhViz uhHKViz = auxuHhK;
         int[int] Order = [1];
